@@ -30,17 +30,17 @@ class PersonTracking:
         input_shape = input_details[0]['shape']
         self.iheight, self.iwidth = input_shape[1], input_shape[2]
         
-        self.mc = MotorControl()
+        # self.mc = MotorControl()
         # Print model info
-        print(f"Input shape: {input_details[0]['shape']}")
-        print(f"Input type: {input_details[0]['dtype']}")
+        # print(f"Input shape: {input_details[0]['shape']}")
+        # print(f"Input type: {input_details[0]['dtype']}")
         
         self.x_delta = 0
         self.y_delta = 0
         # self.ty = threading.Thread(target = self.move_y_servo, daemon = True)
-        self.tx = threading.Thread(target = self.move_x_servo, daemon = True)
+        # self.tx = threading.Thread(target = self.move_x_servo, daemon = True)
         # self.ty.start()
-        self.tx.start()
+        # self.tx.start()
         
         
         # Load labels
@@ -64,23 +64,15 @@ class PersonTracking:
         cv2.destroyAllWindows()
 
     def basic_video(self, frame):
-        #while True:
-            # frame = self.picam2.capture_array()
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         if frame is not None:
             results = self.process_image(frame)
+            print(results)
             for result in results:
                 if result["score"] > 0.5 and result['class_id'] == 0:  # Assuming class_id 0 is 'person'
                     box = result['bounding_box'] * 640
                     y1, x1, y2, x2 = map(int, box)
                     # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     self.move_servo([x1, y1, x2, y2])
-            # cv2.putText(frame, f"Detected {len(results)} persons", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-                # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                # cv2.imshow("Basic Video", frame)
-            # if cv2.waitKey(1) & 0xFF == ord('q'):
-            #    break
-        # cv2.destroyAllWindows()
     
     def process_image(self, image):
         # Resize image to model input size
@@ -105,29 +97,23 @@ class PersonTracking:
         
         
         
-    def move_y_servo(self):
-        while True:
-            print(f"y_delta: {self.y_delta}")
-            if self.y_delta > 20:
-                self.mc.set_angle(self.y_delta)
-            elif self.y_delta < -20:
-                self.mc.set_angle(self.y_delta)
-            time.sleep(0.05)
+    # def move_y_servo(self):
+    #     while True:
+    #         print(f"y_delta: {self.y_delta}")
+    #         if self.y_delta > 20:
+    #             self.mc.set_angle(self.y_delta)
+    #         elif self.y_delta < -20:
+    #             self.mc.set_angle(self.y_delta)
+    #         time.sleep(0.05)
     
-    def move_x_servo(self):
-        while True:
-            # print(f"x_delta: {self.x_delta}")
-            if self.x_delta > 20:
-                self.mc.set_angle(self.x_delta * -1) # actually going right
-            elif self.x_delta < -20:
-                self.mc.set_angle(self.x_delta * -1) # actually going left
-            time.sleep(0.05)
-            
-        
-        
-        
-        
-        
+    # def move_x_servo(self):
+    #     while True:
+    #         # print(f"x_delta: {self.x_delta}")
+    #         if self.x_delta > 20:
+    #             self.mc.set_angle(self.x_delta * -1) # actually going right
+    #         elif self.x_delta < -20:
+    #             self.mc.set_angle(self.x_delta * -1) # actually going left
+    #         time.sleep(0.05)
         
 def main():
     tracker = PersonTracking()
