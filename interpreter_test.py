@@ -2,7 +2,6 @@
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from tflite_runtime.interpreter import Interpreter, load_delegate
 import argparse
 from time import time
 

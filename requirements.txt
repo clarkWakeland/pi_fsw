@@ -1,0 +1,8 @@
+Flask==2.2.2
+flask_socketio==5.5.1
+numpy==1.24.2
+picamera2==0.3.30
+Pillow==11.3.0
+rpi_lgpio==0.6
+ultralytics==8.3.176
+websockets==15.0.1

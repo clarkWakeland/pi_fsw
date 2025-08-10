@@ -5,7 +5,6 @@ import numpy as np
 from picamera2 import Picamera2
 import time
 import threading
-from tflite_runtime.interpreter import Interpreter, load_delegate
 from interpreter_test import detect_objects
 from adafruit_servo_test import MotorControl
 
