@@ -9,10 +9,14 @@ import numpy as np
 from flask_socketio import SocketIO, emit
 import websockets
 import asyncio
+import json
 
 app = Flask(__name__)
 
 class Websocket_handler():
+    def __init__(self, person_tracking_instance):
+        self.tracker = person_tracking_instance
+
     async def main(self):
         async with websockets.serve(self.handle, "0.0.0.0", port=5000):
             print("websocket server started on port 5000")
@@ -20,10 +24,24 @@ class Websocket_handler():
 
     async def handle(self, websocket):
         async for message in websocket:
-            print(message)
+            message_dict = json.loads(message)
+            match message_dict["type"]:
+                case "box-drawn":
+                    print("box drawn")
+                
+                case "canvas-click":
+                    print("click")
+
+                case "toggle-tracking":
+                    self.tracker.toggle_tracking()
+
+                case "manual-control":
+                    print(f"manual control: {message_dict['direction']}")
+                    self.tracker.manual_control(message_dict["direction"])
+
 
 class CameraStreamer:
-    def __init__(self):
+    def __init__(self, person_tracking_instance):
         self.picam2 = Picamera2()
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}))
         self.picam2.start()
@@ -32,53 +50,51 @@ class CameraStreamer:
         self.condition = threading.Condition()
         self.update_frame()
         print("TESTTESTSETSETST")
-        # self.tracker = PersonTracking()
-        # threading.Thread(target = self.tracking, daemon=True).start()
-    
-            
+        self.tracker = person_tracking_instance
+        threading.Thread(target = self.tracking, daemon=True).start()
+
     def update_frame(self):
         # This function runs continuously to update the current frame
         def _update():
             while True:
-                print("test1")
                 buffer = io.BytesIO()
                 self.frame = self.picam2.capture_array()
                 self.frame_copy = np.copy(self.frame)
                 # self.tracker.basic_video(frame)
                 img = Image.fromarray(self.frame)
-                print(img)
                 img.save(buffer, format='JPEG')
                 with self.condition:
                     self.frame = buffer.getvalue()
                     self.condition.notify_all()
                 # time.sleep(1 / 40)  # ~30 fps
         
-        threading.Thread(target=_update(), daemon=True).start()
+        threading.Thread(target=_update, daemon=True).start()
         
     def tracking(self):
         while True:
-            # self.tracker.basic_video(self.frame_copy)
-            pass
-            
+            self.tracker.basic_video(self.frame_copy)
     
     def get_frame(self):
         with self.condition:
             self.condition.wait()
             return self.frame
 
-camera = CameraStreamer()
+pTrack = PersonTracking()
+camera = CameraStreamer(pTrack)
 
-wsHandler = Websocket_handler()
+wsHandler = Websocket_handler(pTrack)
 
 
 @app.route('/video')
 def video_feed():
     def generate():
         while True:
-            print("test2")
             frame = camera.get_frame()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+            # only yield if frame isn't a np array
+            if not isinstance(frame, np.ndarray):
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/')
