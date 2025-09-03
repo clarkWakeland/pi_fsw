@@ -16,6 +16,7 @@ app = Flask(__name__)
 class Websocket_handler():
     def __init__(self, person_tracking_instance):
         self.tracker = person_tracking_instance
+        self.trackingPrimed = False
 
     async def main(self):
         async with websockets.serve(self.handle, "0.0.0.0", port=5000):
@@ -27,13 +28,19 @@ class Websocket_handler():
             message_dict = json.loads(message)
             match message_dict["type"]:
                 case "box-drawn":
-                    print("box drawn")
+                    print(message_dict)
                 
                 case "canvas-click":
-                    print("click")
+                    print(message_dict)
+                    if self.trackingPrimed:
+                        self.tracker.toggleTracking(message_dict["position"]["x"], message_dict["position"]["y"])
+                    else:
+                        await websocket.send(json.dumps({"error": "Click doesn't matter, not tracking"}))
 
                 case "toggle-tracking":
-                    self.tracker.toggle_tracking()
+                    # self.tracker.toggle_tracking()
+                    self.trackingPrimed = not self.trackingPrimed
+                    await websocket.send(json.dumps({"tracking": self.tracker.isTracking}))
 
                 case "manual-control":
                     print(f"manual control: {message_dict['direction']}")
@@ -49,7 +56,6 @@ class CameraStreamer:
         self.frame_copy = None
         self.condition = threading.Condition()
         self.update_frame()
-        print("TESTTESTSETSETST")
         self.tracker = person_tracking_instance
         threading.Thread(target = self.tracking, daemon=True).start()
 
@@ -60,13 +66,11 @@ class CameraStreamer:
                 buffer = io.BytesIO()
                 self.frame = self.picam2.capture_array()
                 self.frame_copy = np.copy(self.frame)
-                # self.tracker.basic_video(frame)
                 img = Image.fromarray(self.frame)
                 img.save(buffer, format='JPEG')
                 with self.condition:
                     self.frame = buffer.getvalue()
                     self.condition.notify_all()
-                # time.sleep(1 / 40)  # ~30 fps
         
         threading.Thread(target=_update, daemon=True).start()
         
@@ -100,6 +104,10 @@ def video_feed():
 @app.route('/')
 def index():
     return '<h1>Raspberry Pi Camera Stream</h1><img src="/video" />'
+
+@app.route('/tracking')
+def return_tracking_value():
+    return {"tracking": pTrack.isTracking}
 
 def start_ws():
     asyncio.run(wsHandler.main())

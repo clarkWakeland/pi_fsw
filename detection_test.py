@@ -24,11 +24,6 @@ class PersonTracking:
         self.ty.start()
         self.tx.start()
     
-            
-    def stop(self):
-        print("Stopping person tracking...")
-        self.running = False
-        cv2.destroyAllWindows()
 
     def toggle_tracking(self):
         self.isTracking = not self.isTracking
@@ -53,6 +48,7 @@ class PersonTracking:
         results = self.hailo.run(image)[0]
 
         # return the one with the highest confidence
+        print(results)
         if results.shape[0] > 0:
             return results[0]
         return None
@@ -70,14 +66,14 @@ class PersonTracking:
         while True:
             # print(f"y_delta: {self.y_delta}")
             if abs(self.y_delta) > 20 and self.isTracking:
-                self.mc.set_angle(self.y_delta * -1, 'y')
+                self.mc.set_angle(self.y_delta, 'y')
             time.sleep(0.05)
 
     def tracking_x_servo(self):
         while True:
             # print(f"x_delta: {self.x_delta}")
             if abs(self.x_delta) > 20 and self.isTracking:
-                self.mc.set_angle(self.x_delta, 'x') # actually want to move in the other direction of our delta
+                self.mc.set_angle(self.x_delta, 'x')
             time.sleep(0.05)
 
     def manual_control(self, message):
@@ -86,9 +82,9 @@ class PersonTracking:
             return
         match message:
             case "UP":
-                self.mc.set_angle(-30, 'y')
-            case "DOWN":
                 self.mc.set_angle(30, 'y')
+            case "DOWN":
+                self.mc.set_angle(-30, 'y')
             case "LEFT":
                 self.mc.set_angle(30, 'x')
             case "RIGHT":

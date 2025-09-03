@@ -10,7 +10,7 @@ class MotorControl:
 
         # init angles
         self.kit.servo[self.X_SERVO_PIN].angle = 90
-        #self.kit.servo[self.Y_SERVO_PIN].angle = 90
+        self.kit.servo[self.Y_SERVO_PIN].angle = 90
         print('servo initialized')
         print(self.kit.servo[self.Y_SERVO_PIN].angle)
 
@@ -32,12 +32,3 @@ class MotorControl:
                 print('servo at max angle')
                 return
             self.kit.servo[self.Y_SERVO_PIN].angle += diff
-
-# for angle in range(0, 180, 1):  # Sweep from 0 to 180 degrees
-#     set_angle(angle)
-    #time.sleep(0.5)  # Wait for servo to reach position
-
-#pi.set_servo_pulsewidth(SERVO_PIN, 0)  # Stop sending pulses
-#pi.stop()  # Stop the pigpio daemon connection
-
-
