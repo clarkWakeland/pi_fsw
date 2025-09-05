@@ -7,18 +7,18 @@ import time
 import threading
 from picamera2.devices import Hailo
 from adafruit_servo_test import MotorControl
+import matplotlib.pyplot as plt
 
 class PersonTracking:
-    def __init__(self):
+    def __init__(self, ws_callback=None):
 
         self.frame = None
         self.running = True
-        self.isTracking = False
-
+        self.isTracking = True
         self.x_delta = 0
         self.y_delta = 0
         self.hailo = Hailo('/usr/share/hailo-models/yolov8s_h8l.hef')
-        self.mc = MotorControl()
+        self.mc = MotorControl(ws_callback=ws_callback)
         self.ty = threading.Thread(target = self.tracking_y_servo, daemon = True)
         self.tx = threading.Thread(target = self.tracking_x_servo, daemon = True)
         self.ty.start()
@@ -31,12 +31,17 @@ class PersonTracking:
     def basic_video(self, frame):
         if frame is not None:
             results = self.process_image(frame)
+            # cv2.imshow("frame", frame)
+            # cv2.waitKey(1)
             if results is not None and self.isTracking:
                 # print(f"Detected: {results}")
                 if results[4] > 0.5: # Assuming class_id 0 is 'person'
                     box = results[:4] * 640
                     y1, x1, y2, x2 = map(int, box)
-                    # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.imshow("frame", frame)
+                    cv2.waitKey(1)
+                    # show frame
                     self.adjust_delta([x1, y1, x2, y2])
     
     def process_image(self, image):
@@ -48,7 +53,7 @@ class PersonTracking:
         results = self.hailo.run(image)[0]
 
         # return the one with the highest confidence
-        print(results)
+        # print(results)
         if results.shape[0] > 0:
             return results[0]
         return None

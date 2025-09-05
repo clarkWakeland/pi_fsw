@@ -17,6 +17,7 @@ class Websocket_handler():
     def __init__(self, person_tracking_instance):
         self.tracker = person_tracking_instance
         self.trackingPrimed = False
+        self.websocket = None
 
     async def main(self):
         async with websockets.serve(self.handle, "0.0.0.0", port=5000):
@@ -24,6 +25,7 @@ class Websocket_handler():
             await asyncio.Future() # run forever
 
     async def handle(self, websocket):
+        self.websocket = websocket
         async for message in websocket:
             message_dict = json.loads(message)
             match message_dict["type"]:
@@ -50,7 +52,7 @@ class Websocket_handler():
 class CameraStreamer:
     def __init__(self, person_tracking_instance):
         self.picam2 = Picamera2()
-        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}))
+        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (640, 640)}))
         self.picam2.start()
         self.frame = None
         self.frame_copy = None
@@ -82,8 +84,14 @@ class CameraStreamer:
         with self.condition:
             self.condition.wait()
             return self.frame
-
-pTrack = PersonTracking()
+def send_ws_message(message):
+    if wsHandler.websocket:
+        asyncio.run_coroutine_threadsafe(
+            wsHandler.websocket.send(json.dumps(message)),
+            wsHandler.websocket.loop
+        )
+        print(message)
+pTrack = PersonTracking(send_ws_message)
 camera = CameraStreamer(pTrack)
 
 wsHandler = Websocket_handler(pTrack)
