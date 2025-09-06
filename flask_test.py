@@ -35,14 +35,16 @@ class Websocket_handler():
                 case "canvas-click":
                     print(message_dict)
                     if self.trackingPrimed:
-                        self.tracker.toggleTracking(message_dict["position"]["x"], message_dict["position"]["y"])
+                        self.tracker.start_tracking(message_dict["position"]["x"], message_dict["position"]["y"])
                     else:
                         await websocket.send(json.dumps({"error": "Click doesn't matter, not tracking"}))
 
                 case "toggle-tracking":
                     # self.tracker.toggle_tracking()
                     self.trackingPrimed = not self.trackingPrimed
-                    await websocket.send(json.dumps({"tracking": self.tracker.isTracking}))
+                    if not self.trackingPrimed:
+                        self.tracker.stop_tracking()
+                    await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
 
                 case "manual-control":
                     print(f"manual control: {message_dict['direction']}")
@@ -115,7 +117,7 @@ def index():
 
 @app.route('/tracking')
 def return_tracking_value():
-    return {"tracking": pTrack.isTracking}
+    return {"tracking": wsHandler.trackingPrimed}
 
 def start_ws():
     asyncio.run(wsHandler.main())
