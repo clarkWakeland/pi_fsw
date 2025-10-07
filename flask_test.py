@@ -1,5 +1,8 @@
 from flask import Flask, Response
 from picamera2 import Picamera2
+from libcamera import Transform, controls
+from picamera2.encoders import H264Encoder
+from picamera2.outputs import FileOutput
 import io
 import time
 from PIL import Image
@@ -14,8 +17,9 @@ import json
 app = Flask(__name__)
 
 class Websocket_handler():
-    def __init__(self, person_tracking_instance):
+    def __init__(self, person_tracking_instance, camera_instance):
         self.tracker = person_tracking_instance
+        self.camera = camera_instance
         self.trackingPrimed = False
         self.websocket = None
 
@@ -49,43 +53,48 @@ class Websocket_handler():
                 case "manual-control":
                     print(f"manual control: {message_dict['direction']}")
                     self.tracker.manual_control(message_dict["direction"])
+                
+                case "get-tracking-status":
+                    await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
 
+                case "autofocus":
+                    print("autofocusing")
+                    result = self.camera.picam2.autofocus_cycle(wait = False)
 
 class CameraStreamer:
     def __init__(self, person_tracking_instance):
         self.picam2 = Picamera2()
-        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (640, 640)}))
+        encoder = H264Encoder(bitrate=50000000)
+        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)},
+                                                                     transform=Transform(hflip=1, vflip=1)))
+        import subprocess
+        ffmpeg_process = subprocess.Popen([
+            'ffmpeg',
+            '-i', 'pipe:0',  # Input comes from stdin
+            '-c:v', 'copy',  # Copy the video codec
+            '-f', 'rtsp',  # Output format
+            '-g', '60',
+            '-pix_fmt', 'yuv420p',
+            '-rtsp_transport', 'tcp',
+            'rtsp://0.0.0.0:8554/live.stream'  # Output file
+        ], stdin=subprocess.PIPE)        
+        self.picam2.start_recording(encoder, FileOutput(ffmpeg_process.stdin))
         self.picam2.start()
-        self.frame = None
-        self.frame_copy = None
+        
+        self.picam2.set_controls({"AfRange": controls.AfRangeEnum.Macro})
+        success = self.picam2.autofocus_cycle(wait = False)
         self.condition = threading.Condition()
-        self.update_frame()
         self.tracker = person_tracking_instance
         threading.Thread(target = self.tracking, daemon=True).start()
-
-    def update_frame(self):
-        # This function runs continuously to update the current frame
-        def _update():
-            while True:
-                buffer = io.BytesIO()
-                self.frame = self.picam2.capture_array()
-                self.frame_copy = np.copy(self.frame)
-                img = Image.fromarray(self.frame)
-                img.save(buffer, format='JPEG')
-                with self.condition:
-                    self.frame = buffer.getvalue()
-                    self.condition.notify_all()
         
-        threading.Thread(target=_update, daemon=True).start()
-        
+        # start mediamtx server
+        subprocess.Popen(["mediamtx"], cwd="../../Downloads")
+        print("started mediamtx server")
+           
     def tracking(self):
         while True:
-            self.tracker.basic_video(self.frame_copy)
+            self.tracker.basic_video(self.picam2.capture_array())
     
-    def get_frame(self):
-        with self.condition:
-            self.condition.wait()
-            return self.frame
 def send_ws_message(message):
     if wsHandler.websocket:
         asyncio.run_coroutine_threadsafe(
@@ -93,31 +102,15 @@ def send_ws_message(message):
             wsHandler.websocket.loop
         )
         print(message)
+
 pTrack = PersonTracking(send_ws_message)
 camera = CameraStreamer(pTrack)
 
-wsHandler = Websocket_handler(pTrack)
-
+wsHandler = Websocket_handler(pTrack, camera)
 
 @app.route('/video')
 def video_feed():
-    def generate():
-        while True:
-            frame = camera.get_frame()
-
-            # only yield if frame isn't a np array
-            if not isinstance(frame, np.ndarray):
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/')
-def index():
-    return '<h1>Raspberry Pi Camera Stream</h1><img src="/video" />'
-
-@app.route('/tracking')
-def return_tracking_value():
-    return {"tracking": wsHandler.trackingPrimed}
+    pass
 
 def start_ws():
     asyncio.run(wsHandler.main())
