@@ -16,7 +16,7 @@ class PersonTracking:
 
         self.frame = None
         self.running = True
-        self.isTracking = True
+        self.isTracking = False
         self.click_x = None
         self.click_y = None
         self.tracking_object = None

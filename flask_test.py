@@ -1,4 +1,3 @@
-from flask import Flask, Response
 from picamera2 import Picamera2
 from libcamera import Transform, controls
 from picamera2.encoders import H264Encoder
@@ -9,19 +8,47 @@ from PIL import Image
 from detection_test import PersonTracking
 import threading
 import numpy as np
-from flask_socketio import SocketIO, emit
 import websockets
 import asyncio
 import json
 
-app = Flask(__name__)
 
 class Websocket_handler():
     def __init__(self, person_tracking_instance, camera_instance):
         self.tracker = person_tracking_instance
         self.camera = camera_instance
         self.trackingPrimed = False
-        self.websocket = None
+
+        self.message_handlers = {
+            "box-drawn": self.handle_box_draw,
+            "canvas-click": self.handle_canvas_click,
+            "toggle-tracking": self.handle_toggle_tracking,
+            "get-tracking-status": self.handle_get_tracking_status,
+            "manual-control": self.handle_manual_control,
+            "autofocus": self.handle_autofocus,
+        }
+
+    async def handle_box_draw(self, data):
+        print(data) # TODO: implement
+
+    async def handle_canvas_click(self, data):
+        print(data) # TODO: implement
+
+    async def handle_toggle_tracking(self, data,websocket):
+        self.trackingPrimed = not self.trackingPrimed
+        if not self.trackingPrimed:
+            self.tracker.stop_tracking()
+        await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
+
+    async def handle_get_tracking_status(self, data, websocket):
+        await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
+
+    async def handle_manual_control(self, data, websocket):
+        self.tracker.manual_control(data['direction'])
+
+    async def handle_autofocus(self, data, websocket):
+        print("autofocus command received")
+        self.camera.picam2.autofocus_cycle(wait = False)
 
     async def main(self):
         async with websockets.serve(self.handle, "0.0.0.0", port=5000):
@@ -29,45 +56,25 @@ class Websocket_handler():
             await asyncio.Future() # run forever
 
     async def handle(self, websocket):
-        self.websocket = websocket
         async for message in websocket:
             message_dict = json.loads(message)
-            match message_dict["type"]:
-                case "box-drawn":
-                    print(message_dict)
-                
-                case "canvas-click":
-                    print(message_dict)
-                    if self.trackingPrimed:
-                        self.tracker.start_tracking(message_dict["position"]["x"], message_dict["position"]["y"])
-                    else:
-                        await websocket.send(json.dumps({"error": "Click doesn't matter, not tracking"}))
-
-                case "toggle-tracking":
-                    # self.tracker.toggle_tracking()
-                    self.trackingPrimed = not self.trackingPrimed
-                    if not self.trackingPrimed:
-                        self.tracker.stop_tracking()
-                    await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
-
-                case "manual-control":
-                    print(f"manual control: {message_dict['direction']}")
-                    self.tracker.manual_control(message_dict["direction"])
-                
-                case "get-tracking-status":
-                    await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
-
-                case "autofocus":
-                    print("autofocusing")
-                    result = self.camera.picam2.autofocus_cycle(wait = False)
+            msg_type = message_dict.get("type")
+            func  = self.message_handlers.get(msg_type)
+            if func:
+                await func(message_dict, websocket)
+            else:
+                print(f"Unknown message type: {msg_type}")
 
 class CameraStreamer:
-    def __init__(self, person_tracking_instance):
+    def __init__(self):
+        import os
+        import subprocess
+        subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
+        print("started mediamtx server")
         self.picam2 = Picamera2()
         encoder = H264Encoder(bitrate=50000000)
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)},
                                                                      transform=Transform(hflip=1, vflip=1)))
-        import subprocess
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',
             '-i', 'pipe:0',  # Input comes from stdin
@@ -78,23 +85,16 @@ class CameraStreamer:
             '-rtsp_transport', 'tcp',
             'rtsp://0.0.0.0:8554/live.stream'  # Output file
         ], stdin=subprocess.PIPE)        
+
+        print("started ffmpeg process")
         self.picam2.start_recording(encoder, FileOutput(ffmpeg_process.stdin))
-        self.picam2.start()
-        
+
+        # wait for camera
+        time.sleep(2)
+
         self.picam2.set_controls({"AfRange": controls.AfRangeEnum.Macro})
-        success = self.picam2.autofocus_cycle(wait = False)
-        self.condition = threading.Condition()
-        self.tracker = person_tracking_instance
-        threading.Thread(target = self.tracking, daemon=True).start()
-        
-        # start mediamtx server
-        subprocess.Popen(["mediamtx"], cwd="../../Downloads")
-        print("started mediamtx server")
+        success = self.picam2.autofocus_cycle(wait = False)        
            
-    def tracking(self):
-        while True:
-            self.tracker.basic_video(self.picam2.capture_array())
-    
 def send_ws_message(message):
     if wsHandler.websocket:
         asyncio.run_coroutine_threadsafe(
@@ -104,20 +104,13 @@ def send_ws_message(message):
         print(message)
 
 pTrack = PersonTracking(send_ws_message)
-camera = CameraStreamer(pTrack)
-
+camera = CameraStreamer()
 wsHandler = Websocket_handler(pTrack, camera)
 
-@app.route('/video')
-def video_feed():
-    pass
-
-def start_ws():
-    asyncio.run(wsHandler.main())
-    
-    
 if __name__ == '__main__':
-    threading.Thread(target=start_ws, daemon=True).start()
-    print("test")
-    app.run(host='0.0.0.0', port=8000, threaded=True)
+    try:
+        asyncio.run(wsHandler.main())
+    except KeyboardInterrupt:
+        print("Shutting down...")
+
     

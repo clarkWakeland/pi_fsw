@@ -10,10 +10,6 @@ class MotorControl:
         self.Y_SERVO_PIN = 1
         self.PROPORTIONAL_GAIN = 0.023
         self.DERIVATIVE_GAIN = 0.0005
-        # self.y_pos_error = []
-        # self.x_pos_error = []
-        # self.x_position = []
-        # self.y_position = []
         self.last_x_delta = 0
         self.last_y_delta = 0
         self.last_time = time.time()
@@ -44,8 +40,8 @@ class MotorControl:
                 print('servo at max angle')
                 return
             self.kit.servo[self.X_SERVO_PIN].angle += diff
-            if self.ws_callback:
-                self.ws_callback({"x_servo_angle": self.kit.servo[self.X_SERVO_PIN].angle, "x_servo_error": diff})
+            # if self.ws_callback:
+            #     self.ws_callback({"x_servo_angle": self.kit.servo[self.X_SERVO_PIN].angle, "x_servo_error": diff})
             
         elif axis.lower() == "y":
             diff =  (delta / 30)  # bigger steps if further away
