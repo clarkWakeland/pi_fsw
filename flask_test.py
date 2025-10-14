@@ -11,6 +11,7 @@ import numpy as np
 import websockets
 import asyncio
 import json
+import subprocess
 
 
 class Websocket_handler():
@@ -67,8 +68,6 @@ class Websocket_handler():
 
 class CameraStreamer:
     def __init__(self):
-        import os
-        import subprocess
         subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
         print("started mediamtx server")
         self.picam2 = Picamera2()
