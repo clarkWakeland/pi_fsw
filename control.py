@@ -1,4 +1,4 @@
-from ultralytics import YOLO
+# from ultralytics import YOLO
 from PIL import Image
 import cv2
 import numpy as np
@@ -122,13 +122,13 @@ class PersonTracking:
             return
         match message:
             case "UP":
-                self.mc.set_angle(30, 'y')
+                self.mc.set_angle(-50, 'y')
             case "DOWN":
-                self.mc.set_angle(-30, 'y')
+                self.mc.set_angle(50, 'y')
             case "LEFT":
-                self.mc.set_angle(30, 'x')
+                self.mc.set_angle(50, 'x')
             case "RIGHT":
-                self.mc.set_angle(-30, 'x')
+                self.mc.set_angle(-50, 'x')
 
 def main():
     tracker = PersonTracking()

@@ -5,7 +5,7 @@ from picamera2.outputs import FileOutput
 import io
 import time
 from PIL import Image
-from detection_test import PersonTracking
+from control import PersonTracking
 import threading
 import numpy as np
 import websockets
@@ -71,9 +71,8 @@ class CameraStreamer:
         subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
         print("started mediamtx server")
         self.picam2 = Picamera2()
-        encoder = H264Encoder(bitrate=50000000)
-        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)},
-                                                                     transform=Transform(hflip=1, vflip=1)))
+        encoder = H264Encoder(bitrate=5000000)
+        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',
             '-i', 'pipe:0',  # Input comes from stdin
