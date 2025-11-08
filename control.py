@@ -6,13 +6,13 @@ from picamera2 import Picamera2
 import time
 import threading
 from picamera2.devices import Hailo
-from adafruit_servo_test import MotorControl
+from servo_control import MotorControl
 import matplotlib.pyplot as plt
 from yolox.tracker.byte_tracker import BYTETracker
 import argparse
 
 class PersonTracking:
-    def __init__(self, ws_callback=None):
+    def __init__(self, ws_callback=None, camera=None):
 
         self.frame = None
         self.running = True
@@ -22,13 +22,19 @@ class PersonTracking:
         self.tracking_object = None
         self.lost_object = False
         self.ws_callback = ws_callback
+        self.camera = camera
         self.x_delta = 0
         self.y_delta = 0
         self.hailo = Hailo('/usr/share/hailo-models/yolov8s_h8l.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
-        
-        self.t = threading.Thread(target = self.tracking_servo, daemon = True)
+
+        # start tracking servo thread        
+        self.t = threading.Thread(target = self.tracking_servo, daemon=True)
         self.t.start()
+
+        # start video processing thread
+        self.v = threading.Thread(target = self.basic_video, daemon=True)
+        self.v.start()
 
         # Initialize the BYTETracker
         parser = argparse.ArgumentParser("basic args")
@@ -41,6 +47,7 @@ class PersonTracking:
         self.tracker = BYTETracker(args=parser.parse_args())
 
     def start_tracking(self, x, y):
+        print(f"received {x} x and {y} y")
         self.isTracking = True
         self.click_x = x
         self.click_y = y
@@ -48,17 +55,19 @@ class PersonTracking:
     def stop_tracking(self):
         self.isTracking = False
 
-    def basic_video(self, frame):
-        if frame is not None:
-            self.process_image(frame)
-            # cv2.imshow("frame", frame)
-            # cv2.waitKey(1)
-            if self.isTracking and self.tracking_object:
-                # print(f"Detected: {results}")
-                if self.tracking_object.score > 0.5: 
-                    print(self.tracking_object.tlbr)
-                    self.adjust_delta(self.tracking_object.tlbr * 640)
-    
+    def basic_video(self):
+        while True:
+            if self.isTracking:
+                print("Processing images")
+                frame = self.camera.capture_array()
+                if frame is not None:
+                    self.process_image(frame)
+                    if self.isTracking and self.tracking_object:
+                        if self.tracking_object.score > 0.5: 
+                            print(self.tracking_object.tlbr)
+                            self.adjust_delta(self.tracking_object.tlbr * 640)
+                time.sleep(0.05) # run inference roughly every 20s for now, can be adjusted later
+        
     def process_image(self, image):
         # Resize image to model input size
         # convert image to 640x640 array
@@ -87,6 +96,7 @@ class PersonTracking:
             for track in tracks:
                 if track.track_id == self.tracking_object.track_id:
                     self.tracking_object = track
+                    self.ws_callback({"bbox": f"{bbox[0]}  {bbox[1]}  {bbox[2]}  {bbox[3]}"})
                     break
                 self.lost_object = True
 
@@ -114,6 +124,7 @@ class PersonTracking:
 
             if abs(self.x_delta) > 20:
                 self.mc.set_angle(self.x_delta, 'x')
+
             time.sleep(0.05)
 
     def manual_control(self, message):
@@ -122,23 +133,10 @@ class PersonTracking:
             return
         match message:
             case "UP":
-                self.mc.set_angle(-50, 'y')
+                self.mc.set_angle('y', -50)
             case "DOWN":
-                self.mc.set_angle(50, 'y')
+                self.mc.set_angle('y', 50)
             case "LEFT":
-                self.mc.set_angle(50, 'x')
+                self.mc.set_angle('x', 50)
             case "RIGHT":
-                self.mc.set_angle(-50, 'x')
-
-def main():
-    tracker = PersonTracking()
-    try:
-        tracker.basic_video()
-    except KeyboardInterrupt:
-        tracker.stop()
-    
-if __name__ == "__main__":
-    main()
-
-
-
+                self.mc.set_angle('x', -50)

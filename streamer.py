@@ -1,6 +1,6 @@
 from picamera2 import Picamera2
 from libcamera import Transform, controls
-from picamera2.encoders import H264Encoder
+from picamera2.encoders import H264Encoder, JpegEncoder, Quality
 from picamera2.outputs import FileOutput
 import io
 import time
@@ -29,13 +29,18 @@ class Websocket_handler():
             "autofocus": self.handle_autofocus,
         }
 
-    async def handle_box_draw(self, data):
+    async def handle_box_draw(self, data, websocket):
         print(data) # TODO: implement
 
-    async def handle_canvas_click(self, data):
-        print(data) # TODO: implement
+    async def handle_canvas_click(self, data, websocket):
+        print("handling_canvas_click")
+        if self.trackingPrimed:
+            coords = data["position"]
+            x = int(coords['x'])
+            y = int(coords['y'])
+            self.tracker.start_tracking(x, y)
 
-    async def handle_toggle_tracking(self, data,websocket):
+    async def handle_toggle_tracking(self, data, websocket):
         self.trackingPrimed = not self.trackingPrimed
         if not self.trackingPrimed:
             self.tracker.stop_tracking()
@@ -71,28 +76,31 @@ class CameraStreamer:
         subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
         print("started mediamtx server")
         self.picam2 = Picamera2()
-        encoder = H264Encoder(bitrate=5000000)
+        encoder = H264Encoder(qp = 10, iperiod=10)
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',
             '-i', 'pipe:0',  # Input comes from stdin
             '-c:v', 'copy',  # Copy the video codec
             '-f', 'rtsp',  # Output format
-            '-g', '60',
-            '-pix_fmt', 'yuv420p',
             '-rtsp_transport', 'tcp',
             'rtsp://0.0.0.0:8554/live.stream'  # Output file
         ], stdin=subprocess.PIPE)        
 
         print("started ffmpeg process")
-        self.picam2.start_recording(encoder, FileOutput(ffmpeg_process.stdin))
+        self.picam2.start_recording(encoder, FileOutput(ffmpeg_process.stdin), quality=Quality.VERY_HIGH)
 
         # wait for camera
         time.sleep(2)
 
-        self.picam2.set_controls({"AfRange": controls.AfRangeEnum.Macro})
-        success = self.picam2.autofocus_cycle(wait = False)        
-           
+        # self.picam2.set_controls({"AfRange": controls.AfRangeEnum.Macro})
+        success = self.picam2.autofocus_cycle(wait = False)
+        # Wait 5 seconds, then save the image
+        time.sleep(5)
+    
+    def capture_array(self):
+        return self.picam2.capture_array()
+
 def send_ws_message(message):
     if wsHandler.websocket:
         asyncio.run_coroutine_threadsafe(
@@ -101,8 +109,8 @@ def send_ws_message(message):
         )
         print(message)
 
-pTrack = PersonTracking(send_ws_message)
 camera = CameraStreamer()
+pTrack = PersonTracking(send_ws_message, camera)
 wsHandler = Websocket_handler(pTrack, camera)
 
 if __name__ == '__main__':
