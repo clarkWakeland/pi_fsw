@@ -18,7 +18,8 @@ class Websocket_handler():
     def __init__(self, person_tracking_instance, camera_instance):
         self.tracker = person_tracking_instance
         self.camera = camera_instance
-        self.trackingPrimed = False
+        self.runML_pi = False
+        self.websocket = None
 
         self.message_handlers = {
             "box-drawn": self.handle_box_draw,
@@ -34,20 +35,20 @@ class Websocket_handler():
 
     async def handle_canvas_click(self, data, websocket):
         print("handling_canvas_click")
-        if self.trackingPrimed:
+        if self.runML_pi:
             coords = data["position"]
-            x = int(coords['x'])
-            y = int(coords['y'])
+            x = float(coords['x'])
+            y = float(coords['y'])
             self.tracker.start_tracking(x, y)
 
     async def handle_toggle_tracking(self, data, websocket):
-        self.trackingPrimed = not self.trackingPrimed
-        if not self.trackingPrimed:
+        self.runML_pi = not self.runML_pi
+        if not self.runML_pi:
             self.tracker.stop_tracking()
-        await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
+        await websocket.send(json.dumps({"tracking": self.runML_pi}))
 
     async def handle_get_tracking_status(self, data, websocket):
-        await websocket.send(json.dumps({"tracking": self.trackingPrimed}))
+        await websocket.send(json.dumps({"tracking": self.runML_pi}))
 
     async def handle_manual_control(self, data, websocket):
         self.tracker.manual_control(data['direction'])
@@ -62,6 +63,7 @@ class Websocket_handler():
             await asyncio.Future() # run forever
 
     async def handle(self, websocket):
+        self.websocket = websocket # bit of spaghetti to allow the callback
         async for message in websocket:
             message_dict = json.loads(message)
             msg_type = message_dict.get("type")
@@ -77,7 +79,7 @@ class CameraStreamer:
         print("started mediamtx server")
         self.picam2 = Picamera2()
         encoder = H264Encoder(qp = 10, iperiod=10)
-        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}))
+        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',
             '-i', 'pipe:0',  # Input comes from stdin
@@ -93,16 +95,14 @@ class CameraStreamer:
         # wait for camera
         time.sleep(2)
 
-        # self.picam2.set_controls({"AfRange": controls.AfRangeEnum.Macro})
-        success = self.picam2.autofocus_cycle(wait = False)
+        self.picam2.autofocus_cycle(wait = False)
         # Wait 5 seconds, then save the image
-        time.sleep(5)
     
     def capture_array(self):
         return self.picam2.capture_array()
 
 def send_ws_message(message):
-    if wsHandler.websocket:
+    if wsHandler.websocket: # if websocket is connected
         asyncio.run_coroutine_threadsafe(
             wsHandler.websocket.send(json.dumps(message)),
             wsHandler.websocket.loop

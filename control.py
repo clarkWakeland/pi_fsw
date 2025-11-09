@@ -1,13 +1,9 @@
 # from ultralytics import YOLO
-from PIL import Image
 import cv2
-import numpy as np
-from picamera2 import Picamera2
 import time
 import threading
 from picamera2.devices import Hailo
 from servo_control import MotorControl
-import matplotlib.pyplot as plt
 from yolox.tracker.byte_tracker import BYTETracker
 import argparse
 
@@ -16,11 +12,10 @@ class PersonTracking:
 
         self.frame = None
         self.running = True
-        self.isTracking = False
+        self.runML = False
         self.click_x = None
         self.click_y = None
         self.tracking_object = None
-        self.lost_object = False
         self.ws_callback = ws_callback
         self.camera = camera
         self.x_delta = 0
@@ -33,7 +28,7 @@ class PersonTracking:
         self.t.start()
 
         # start video processing thread
-        self.v = threading.Thread(target = self.basic_video, daemon=True)
+        self.v = threading.Thread(target = self.ml_loop, daemon=True)
         self.v.start()
 
         # Initialize the BYTETracker
@@ -48,25 +43,26 @@ class PersonTracking:
 
     def start_tracking(self, x, y):
         print(f"received {x} x and {y} y")
-        self.isTracking = True
+        self.runML = True
         self.click_x = x
         self.click_y = y
     
     def stop_tracking(self):
-        self.isTracking = False
+        self.runML = False
 
-    def basic_video(self):
+    def ml_loop(self):
         while True:
-            if self.isTracking:
+            if self.runML:
                 print("Processing images")
                 frame = self.camera.capture_array()
                 if frame is not None:
                     self.process_image(frame)
-                    if self.isTracking and self.tracking_object:
+                    if self.runML and self.tracking_object:
                         if self.tracking_object.score > 0.5: 
                             print(self.tracking_object.tlbr)
                             self.adjust_delta(self.tracking_object.tlbr * 640)
-                time.sleep(0.05) # run inference roughly every 20s for now, can be adjusted later
+
+            time.sleep(0.1) # run inference 10 times/s for now, can be adjusted later
         
     def process_image(self, image):
         # Resize image to model input size
@@ -77,7 +73,7 @@ class PersonTracking:
         results = self.hailo.run(image)[0]
 
         tracks = self.tracker.update(results, [640, 640], [640, 640])
-        if self.click_x and self.click_y:
+        if self.click_x and self.click_y: # track new object
             x, y = self.click_x, self.click_y
             self.click_x, self.click_y = None, None
             print(tracks)
@@ -86,24 +82,23 @@ class PersonTracking:
                 print(bbox)
                 if bbox[0] <= y <= bbox[2] and bbox[1] <= x <= bbox[3]:
                     self.tracking_object = track
-                    self.lost_object = False
                     self.ws_callback({"tracking": "Tracking Object"})
                     print(f"Started tracking object ID: {self.tracking_object.track_id}")
                     break
 
-        elif self.tracking_object:
-            #continue tracking the same object
+        elif self.tracking_object: # continue tracking the same object
             for track in tracks:
                 if track.track_id == self.tracking_object.track_id:
-                    self.tracking_object = track
+                    bbox = track.tlbr
                     self.ws_callback({"bbox": f"{bbox[0]}  {bbox[1]}  {bbox[2]}  {bbox[3]}"})
                     break
-                self.lost_object = True
 
-            if self.lost_object:
+                self.tracking_object = None
+
+            if not self.tracking_object:
                 # case where object is lost
-                self.isTracking = False
-                self.ws_callback({"tracking": "Lost Object"})
+                self.runML = False
+                # self.ws_callback({"tracking": "Lost Object"})
                 print("Lost track of object")
 
 
@@ -117,18 +112,18 @@ class PersonTracking:
         self.y_delta = SCREEN_CENTER[1] - y_cent
 
     def tracking_servo(self):
-        while self.isTracking:
-            
-            if abs(self.y_delta) > 20:
-                self.mc.set_angle(self.y_delta, 'y')
+        while True:
+            if self.runML:
+                if abs(self.y_delta) > 20:
+                    self.mc.set_angle('y', self.y_delta)
 
-            if abs(self.x_delta) > 20:
-                self.mc.set_angle(self.x_delta, 'x')
+                if abs(self.x_delta) > 20:
+                    self.mc.set_angle('x', self.x_delta)
 
             time.sleep(0.05)
 
     def manual_control(self, message):
-        if self.isTracking:
+        if self.runML:
             print("Manual control is disabled while tracking is on.")
             return
         match message:
