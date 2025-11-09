@@ -23,13 +23,8 @@ class PersonTracking:
         self.hailo = Hailo('/usr/share/hailo-models/yolov8s_h8l.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
-        # start tracking servo thread        
-        self.t = threading.Thread(target = self.tracking_servo, daemon=True)
-        self.t.start()
-
-        # start video processing thread
-        self.v = threading.Thread(target = self.ml_loop, daemon=True)
-        self.v.start()
+        threading.Thread(target = self.tracking_servo, daemon=True).start()
+        threading.Thread(target = self.ml_loop, daemon=True).start()
 
         # Initialize the BYTETracker
         parser = argparse.ArgumentParser("basic args")
@@ -39,7 +34,7 @@ class PersonTracking:
         parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
         parser.add_argument("--mot20", dest="mot20", default=True, action="store_true", help="test mot20.")
 
-        self.tracker = BYTETracker(args=parser.parse_args())
+        self.BYTEtracker = BYTETracker(args=parser.parse_args())
 
     def start_tracking(self, x, y):
         print(f"received {x} x and {y} y")
@@ -51,6 +46,10 @@ class PersonTracking:
         self.runML = False
 
     def ml_loop(self):
+        ''' 
+        ML thread loop. 
+        Only runs if user toggles tracking
+        '''
         while True:
             if self.runML:
                 print("Processing images")
@@ -62,49 +61,45 @@ class PersonTracking:
                             print(self.tracking_object.tlbr)
                             self.adjust_delta(self.tracking_object.tlbr * 640)
 
-            time.sleep(0.1) # run inference 10 times/s for now, can be adjusted later
+            time.sleep(0.1) # run inference 10 times/sec for now, can be adjusted
         
     def process_image(self, image):
-        # Resize image to model input size
-        # convert image to 640x640 array
+        ''' 
+        Process a single image, return object tracks
+        '''
         image = cv2.resize(image, (640, 640))
-
-        # Run object detection
         results = self.hailo.run(image)[0]
+        tracks = self.BYTEtracker.update(results, [640, 640], [640, 640])
+        self.update_tracking_object(tracks)
 
-        tracks = self.tracker.update(results, [640, 640], [640, 640])
-        if self.click_x and self.click_y: # track new object
+    def update_tracking_object(self, tracks):
+        ''' 
+        logic for selecting and updating the tracked object
+        '''
+
+        if self.click_x and self.click_y: # user clicked, track new object if there is one at that location
             x, y = self.click_x, self.click_y
             self.click_x, self.click_y = None, None
-            print(tracks)
             for track in tracks:
-                bbox = track.tlbr
-                print(bbox)
-                if bbox[0] <= y <= bbox[2] and bbox[1] <= x <= bbox[3]:
+                x0, y0, x1, y1 = track.tlbr
+                if y0 <= y <= y1 and x0 <= x <= x1:
                     self.tracking_object = track
                     self.ws_callback({"tracking": "Tracking Object"})
                     print(f"Started tracking object ID: {self.tracking_object.track_id}")
                     break
 
         elif self.tracking_object: # continue tracking the same object
-            for track in tracks:
-                if track.track_id == self.tracking_object.track_id:
-                    bbox = track.tlbr
-                    self.ws_callback({"bbox": f"{bbox[0]}  {bbox[1]}  {bbox[2]}  {bbox[3]}"})
-                    break
-
-                self.tracking_object = None
-
-            if not self.tracking_object:
-                # case where object is lost
-                self.runML = False
-                # self.ws_callback({"tracking": "Lost Object"})
+            object_still_there = any(track.track_id == self.tracking_object.track_id for track in tracks)
+            if not object_still_there:
+                self.tracking_object = None                
+                self.runML = False # case where object is lost
+                self.y_delta = 0
+                self.x_delta = 0
                 print("Lost track of object")
 
-
     def adjust_delta(self, coords):
-        # input list of [x1, y1, x2, y2]
-        SCREEN_CENTER = (320, 400) # TODO: 240 for testing
+        # input list of [x0, y0, x1, y1]
+        SCREEN_CENTER = (320, 400) 
         y_cent = (coords[2] + coords[0])/2
         x_cent = (coords[3] + coords[1])/2
 

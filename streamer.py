@@ -1,13 +1,9 @@
 from picamera2 import Picamera2
-from libcamera import Transform, controls
-from picamera2.encoders import H264Encoder, JpegEncoder, Quality
+from libcamera import Transform
+from picamera2.encoders import H264Encoder, Quality
 from picamera2.outputs import FileOutput
-import io
 import time
-from PIL import Image
 from control import PersonTracking
-import threading
-import numpy as np
 import websockets
 import asyncio
 import json
@@ -76,7 +72,6 @@ class Websocket_handler():
 class CameraStreamer:
     def __init__(self):
         subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
-        print("started mediamtx server")
         self.picam2 = Picamera2()
         encoder = H264Encoder(qp = 10, iperiod=10)
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))
@@ -94,15 +89,13 @@ class CameraStreamer:
 
         # wait for camera
         time.sleep(2)
-
         self.picam2.autofocus_cycle(wait = False)
-        # Wait 5 seconds, then save the image
     
     def capture_array(self):
         return self.picam2.capture_array()
 
 def send_ws_message(message):
-    if wsHandler.websocket: # if websocket is connected
+    if wsHandler.websocket: 
         asyncio.run_coroutine_threadsafe(
             wsHandler.websocket.send(json.dumps(message)),
             wsHandler.websocket.loop

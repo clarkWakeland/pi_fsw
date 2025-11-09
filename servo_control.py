@@ -4,16 +4,15 @@ import numpy as np
 class MotorControl:
    
     def __init__(self, ws_callback=None):
-
         self.X_SERVO_PIN = 0
         self.Y_SERVO_PIN = 1
-        self.PROPORTIONAL_GAIN = 0.023
-        self.DERIVATIVE_GAIN = 0.0005
+        self.PROPORTIONAL_GAIN = 0.023  # I love numbers that I pulled from thin air
+        self.DERIVATIVE_GAIN = 0.0005   # Experimental constants, deviation from these can result in oscillation
+                                        # or sluggish movement, but can probably be tuned more
         self.last_x_delta = 0
         self.last_y_delta = 0
         self.last_x_time = time.time()
         self.last_y_time = time.time()
-        self.min_delta = 5  # minimum delta to move servo
         self.ws_callback = ws_callback
 
         # init angles
@@ -45,7 +44,7 @@ class MotorControl:
 
             control_output = p + d
             new_angle = pantilthat.get_pan() + control_output
-            if new_angle > 90 or new_angle < -90:
+            if abs(new_angle) > 90 :
                 print('servo at max angle')
                 return
             
@@ -62,7 +61,7 @@ class MotorControl:
             control_output = p + d
 
             new_angle = pantilthat.get_tilt() + control_output
-            if new_angle > 90 or new_angle < -90:
+            if abs(new_angle) > 90 :
                 print('servo at max angle')
                 return
             
