@@ -6,6 +6,12 @@ from picamera2.devices import Hailo
 from servo_control import MotorControl
 from yolox.tracker.byte_tracker import BYTETracker
 import argparse
+import logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 class PersonTracking:
     def __init__(self, ws_callback=None, camera=None):
@@ -16,6 +22,7 @@ class PersonTracking:
         self.click_x = None
         self.click_y = None
         self.tracking_object = None
+        self.auto_acquire = False
         self.ws_callback = ws_callback
         self.camera = camera
         self.x_delta = 0
@@ -28,7 +35,7 @@ class PersonTracking:
 
         # Initialize the BYTETracker
         parser = argparse.ArgumentParser("basic args")
-        parser.add_argument("--track_thresh", type=float, default=0.7, help="tracking confidence threshold")
+        parser.add_argument("--track_thresh", type=float, default=0.2, help="tracking confidence threshold")
         parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
         parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
         parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
@@ -37,7 +44,7 @@ class PersonTracking:
         self.BYTEtracker = BYTETracker(args=parser.parse_args())
 
     def start_tracking(self, x, y):
-        print(f"received {x} x and {y} y")
+        logger.info(f"received {x} x and {y} y")
         self.runML = True
         self.click_x = x
         self.click_y = y
@@ -52,13 +59,13 @@ class PersonTracking:
         '''
         while True:
             if self.runML:
-                print("Processing images")
+                logger.info("Processing images")
                 frame = self.camera.capture_array()
                 if frame is not None:
                     self.process_image(frame)
                     if self.runML and self.tracking_object:
-                        if self.tracking_object.score > 0.5: 
-                            print(self.tracking_object.tlbr)
+                        if self.tracking_object.score > 0.3: 
+                            logger.info(self.tracking_object.tlbr)
                             self.adjust_delta(self.tracking_object.tlbr * 640)
 
             time.sleep(0.1) # run inference 10 times/sec for now, can be adjusted
@@ -77,6 +84,23 @@ class PersonTracking:
         logic for selecting and updating the tracked object
         '''
 
+        if self.auto_acquire:
+            highest_confidence = 0
+            if not tracks:
+                self.x_delta = 0
+                self.y_delta = 0
+                self.tracking_object = None
+                return
+            logger.info([track.score for track in tracks])
+            for track in tracks:
+                if track.score > highest_confidence:
+                    logger.info(f"Auto acquired object ID: {track.track_id} with confidence {track.score}")
+                    highest_confidence = track.score
+                    highest_conf = track
+
+            self.tracking_object = highest_conf
+            return
+
         if self.click_x and self.click_y: # user clicked, track new object if there is one at that location
             x, y = self.click_x, self.click_y
             self.click_x, self.click_y = None, None
@@ -85,8 +109,8 @@ class PersonTracking:
                 if y0 <= y <= y1 and x0 <= x <= x1:
                     self.tracking_object = track
                     self.ws_callback({"tracking": "Tracking Object"})
-                    print(f"Started tracking object ID: {self.tracking_object.track_id}")
-                    break
+                    logger.info(f"Started tracking object ID: {self.tracking_object.track_id}")
+                    return
 
         elif self.tracking_object: # continue tracking the same object
             object_still_there = any(track.track_id == self.tracking_object.track_id for track in tracks)
@@ -95,7 +119,7 @@ class PersonTracking:
                 self.runML = False # case where object is lost
                 self.y_delta = 0
                 self.x_delta = 0
-                print("Lost track of object")
+                logger.info("Lost track of object")
 
     def adjust_delta(self, coords):
         # input list of [x0, y0, x1, y1]
@@ -119,7 +143,7 @@ class PersonTracking:
 
     def manual_control(self, message):
         if self.runML:
-            print("Manual control is disabled while tracking is on.")
+            logger.info("Manual control is disabled while tracking is on.")
             return
         match message:
             case "UP":

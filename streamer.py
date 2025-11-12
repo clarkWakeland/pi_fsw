@@ -24,6 +24,7 @@ class Websocket_handler():
             "get-tracking-status": self.handle_get_tracking_status,
             "manual-control": self.handle_manual_control,
             "autofocus": self.handle_autofocus,
+            "toggle-auto-acquire": self.handle_auto_acquire
         }
 
     async def handle_box_draw(self, data, websocket):
@@ -39,6 +40,7 @@ class Websocket_handler():
 
     async def handle_toggle_tracking(self, data, websocket):
         self.runML_pi = not self.runML_pi
+        self.tracker.runML = self.runML_pi
         if not self.runML_pi:
             self.tracker.stop_tracking()
         await websocket.send(json.dumps({"tracking": self.runML_pi}))
@@ -50,8 +52,12 @@ class Websocket_handler():
         self.tracker.manual_control(data['direction'])
 
     async def handle_autofocus(self, data, websocket):
-        print("autofocus command received")
         self.camera.picam2.autofocus_cycle(wait = False)
+        print("autofocus command received")
+
+    async def handle_auto_acquire(self, data, websocket):
+        self.tracker.auto_acquire = not self.tracker.auto_acquire
+        print(f"auto acquire set to {self.tracker.auto_acquire}")
 
     async def main(self):
         async with websockets.serve(self.handle, "0.0.0.0", port=5000):
@@ -77,11 +83,11 @@ class CameraStreamer:
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',
-            '-i', 'pipe:0',  # Input comes from stdin
-            '-c:v', 'copy',  # Copy the video codec
-            '-f', 'rtsp',  # Output format
+            '-i', 'pipe:0',
+            '-c:v', 'copy', 
+            '-f', 'rtsp',  
             '-rtsp_transport', 'tcp',
-            'rtsp://0.0.0.0:8554/live.stream'  # Output file
+            'rtsp://0.0.0.0:8554/live.stream'  # Output to mediamtx server
         ], stdin=subprocess.PIPE)        
 
         print("started ffmpeg process")
