@@ -4,7 +4,7 @@ import time
 import threading
 from picamera2.devices import Hailo
 from servo_control import MotorControl
-from yolox.tracker.byte_tracker import BYTETracker
+from yolox.tracker.byte_tracker import BYTETracker, STrack
 import argparse
 import logging
 logging.basicConfig(
@@ -27,7 +27,7 @@ class PersonTracking:
         self.camera = camera
         self.x_delta = 0
         self.y_delta = 0
-        self.hailo = Hailo('/usr/share/hailo-models/yolov8s_h8l.hef')
+        self.hailo = Hailo('small_data.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
         threading.Thread(target = self.tracking_servo, daemon=True).start()
@@ -35,9 +35,9 @@ class PersonTracking:
 
         # Initialize the BYTETracker
         parser = argparse.ArgumentParser("basic args")
-        parser.add_argument("--track_thresh", type=float, default=0.2, help="tracking confidence threshold")
+        parser.add_argument("--track_thresh", type=float, default=0.1, help="tracking confidence threshold")
         parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
-        parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
+        parser.add_argument("--match_thresh", type=float, default=0.1, help="matching threshold for tracking")
         parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
         parser.add_argument("--mot20", dest="mot20", default=True, action="store_true", help="test mot20.")
 
@@ -64,7 +64,7 @@ class PersonTracking:
                 if frame is not None:
                     self.process_image(frame)
                     if self.runML and self.tracking_object:
-                        if self.tracking_object.score > 0.3: 
+                        if self.tracking_object.score > 0.5: 
                             logger.info(self.tracking_object.tlbr)
                             self.adjust_delta(self.tracking_object.tlbr * 640)
 
@@ -76,8 +76,14 @@ class PersonTracking:
         '''
         image = cv2.resize(image, (640, 640))
         results = self.hailo.run(image)[0]
-        tracks = self.BYTEtracker.update(results, [640, 640], [640, 640])
-        self.update_tracking_object(tracks)
+        logger.info(f"Detections: {results}")
+
+        if len(results) != 0:
+            results = results[0]  # pick highest confidence detection
+            # Ignore byte tracker for now
+            # tracks = self.BYTEtracker.update(results, [640, 640], [640, 640])
+            track = STrack(tlwh=[results[0], results[1], results[2]-results[0], results[3]-results[1]], score=results[4])
+            self.update_tracking_object([track])
 
     def update_tracking_object(self, tracks):
         ''' 
@@ -95,6 +101,7 @@ class PersonTracking:
             for track in tracks:
                 if track.score > highest_confidence:
                     logger.info(f"Auto acquired object ID: {track.track_id} with confidence {track.score}")
+                    self.ws_callback({"object": {"box": {'x1': track.tlbr[0], 'y1': track.tlbr[1], 'x2': track.tlbr[2], 'y2': track.tlbr[3]}, "confidence": str(track.score)}})
                     highest_confidence = track.score
                     highest_conf = track
 
