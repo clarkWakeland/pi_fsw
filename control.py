@@ -3,9 +3,12 @@ import cv2
 import time
 import threading
 from picamera2.devices import Hailo
+import torch
 from servo_control import MotorControl
 from yolox.tracker.byte_tracker import BYTETracker, STrack
+from torchvision.ops import nms
 import argparse
+
 import logging
 logging.basicConfig(
     level=logging.INFO, 
@@ -27,7 +30,7 @@ class PersonTracking:
         self.camera = camera
         self.x_delta = 0
         self.y_delta = 0
-        self.hailo = Hailo('small_data.hef')
+        self.hailo = Hailo('hailo_models/smaller_data_2.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
         threading.Thread(target = self.tracking_servo, daemon=True).start()
@@ -64,7 +67,7 @@ class PersonTracking:
                 if frame is not None:
                     self.process_image(frame)
                     if self.runML and self.tracking_object:
-                        if self.tracking_object.score > 0.5: 
+                        if self.tracking_object.score > 0.65: 
                             logger.info(self.tracking_object.tlbr)
                             self.adjust_delta(self.tracking_object.tlbr * 640)
 
@@ -76,12 +79,16 @@ class PersonTracking:
         '''
         image = cv2.resize(image, (640, 640))
         results = self.hailo.run(image)[0]
+
+        # run NMS
+        results_ind = nms(torch.tensor(results)[:, :4], torch.tensor(results)[:,4], 0.6)
+        results = [results[i] for i in results_ind]
         logger.info(f"Detections: {results}")
 
         if len(results) != 0:
             results = results[0]  # pick highest confidence detection
             # Ignore byte tracker for now
-            # tracks = self.BYTEtracker.update(results, [640, 640], [640, 640])
+            tracks = self.BYTEtracker.update(results, [640, 640], [640, 640])
             track = STrack(tlwh=[results[0], results[1], results[2]-results[0], results[3]-results[1]], score=results[4])
             self.update_tracking_object([track])
 
@@ -89,9 +96,8 @@ class PersonTracking:
         ''' 
         logic for selecting and updating the tracked object
         '''
-
+        conf_thresh = 0.7
         if self.auto_acquire:
-            highest_confidence = 0
             if not tracks:
                 self.x_delta = 0
                 self.y_delta = 0
@@ -99,14 +105,13 @@ class PersonTracking:
                 return
             logger.info([track.score for track in tracks])
             for track in tracks:
-                if track.score > highest_confidence:
+                if track.score > conf_thresh:
                     logger.info(f"Auto acquired object ID: {track.track_id} with confidence {track.score}")
                     self.ws_callback({"object": {"box": {'x1': track.tlbr[0], 'y1': track.tlbr[1], 'x2': track.tlbr[2], 'y2': track.tlbr[3]}, "confidence": str(track.score)}})
-                    highest_confidence = track.score
                     highest_conf = track
-
-            self.tracking_object = highest_conf
-            return
+                    self.tracking_object = highest_conf
+                    self.auto_acquire = False
+                    return
 
         if self.click_x and self.click_y: # user clicked, track new object if there is one at that location
             x, y = self.click_x, self.click_y
@@ -139,14 +144,14 @@ class PersonTracking:
 
     def tracking_servo(self):
         while True:
-            if self.runML:
-                if abs(self.y_delta) > 20:
+            if self.runML and self.tracking_object:
+                if abs(self.y_delta) > 10:
                     self.mc.set_angle('y', self.y_delta)
 
-                if abs(self.x_delta) > 20:
+                if abs(self.x_delta) > 10:
                     self.mc.set_angle('x', self.x_delta)
 
-            time.sleep(0.05)
+            time.sleep(0.02)
 
     def manual_control(self, message):
         if self.runML:

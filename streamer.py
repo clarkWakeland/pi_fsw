@@ -8,6 +8,16 @@ import websockets
 import asyncio
 import json
 import subprocess
+import smbus2
+import logging
+
+# Battery poller task
+I2C_BUS = 1
+ADDR = 0x36
+VOLTAGE_REG = 0x02
+POLL_INTERVAL = 120 # in seconds
+
+bus = smbus2.SMBus(I2C_BUS)
 
 
 class Websocket_handler():
@@ -59,10 +69,34 @@ class Websocket_handler():
         self.tracker.auto_acquire = not self.tracker.auto_acquire
         print(f"auto acquire set to {self.tracker.auto_acquire}")
 
+    
+    def read_voltage(self) -> float:
+
+        val = bus.read_word_data(ADDR, VOLTAGE_REG)
+        swapped = ((val << 8) & 0xFF00) + (val >> 8)
+        return (swapped >> 3) * 1.25 / 1000.0
+
+    async def poll_battery(self):
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                voltage = await loop.run_in_executor(None, self.read_voltage)
+                logging.info(f"Battery voltage: {voltage:.3f} V")
+                send_ws_message({"battery_voltage": voltage})
+
+            except Exception as e:
+                logging.error(f"Error polling battery voltage: {e}")
+
+            await asyncio.sleep(POLL_INTERVAL)
+
     async def main(self):
-        async with websockets.serve(self.handle, "0.0.0.0", port=5000):
-            print("websocket server started on port 5000")
-            await asyncio.Future() # run forever
+        try:
+            async with websockets.serve(self.handle, "0.0.0.0", port=5000):
+                print("websocket server started on port 5000")
+                battery_task = asyncio.create_task(self.poll_battery())                    
+                await asyncio.Future() # run forever
+        finally:
+            battery_task.cancel()
 
     async def handle(self, websocket):
         self.websocket = websocket # bit of spaghetti to allow the callback
