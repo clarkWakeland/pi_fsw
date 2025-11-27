@@ -1,7 +1,7 @@
-from libcamera import Transform 
-from ultralytics import RTDETR
-from picamera2 import Picamera2
-from picamera2.devices import Hailo
+# from libcamera import Transform 
+from ultralytics import YOLO
+# from picamera2 import Picamera2
+# from picamera2.devices import Hailo
 import torch
 from torchvision.ops import nms
 from yolox.tracker.byte_tracker import BYTETracker, STrack
@@ -10,36 +10,50 @@ import cv2
 import time
 import numpy as np
 
-# hailo = Hailo('detr_resnet50_v1_18_bn.hef')
-hailo = Hailo('hailo_models/best_train6.hef')
+# hailo = Hailo('hailo_models/best_train6.hef')
 
 # picam = Picamera2()
 # # Just make the format RGB
 # picam_config = picam.create_preview_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1))
 # picam.configure(picam_config)
 # picam.start()
-cap = cv2.VideoCapture('/home/clark64/Downloads/output_2.mp4')
+cap = cv2.VideoCapture('/home/clark/Desktop/dataset/validation_vid.mp4')
 # Initialize the BYTETracker
 parser = argparse.ArgumentParser("basic args")
 parser.add_argument("--track_thresh", type=float, default=0.5, help="tracking confidence threshold")
 parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
-parser.add_argument("--match_thresh", type=float, default=0.90, help="matching threshold for tracking")
+parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
 parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
-parser.add_argument("--mot20", dest="mot20", default=True, action="store_true", help="test mot20.")
+parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
 
 btrack = BYTETracker(args=parser.parse_args())
 frame_count = 0
 tracks = []
 useByteTrack = True
 new_results = []
+print("working")
 def process_image():
     global tracks, new_results
-    results = hailo.run(resized_frame)[0]
-    results_ind = nms(torch.tensor(results)[:, :4], torch.tensor(results)[:, 4], 0.6)
+    # Use if running on pi
+    # results = hailo.run(resized_frame)[0] 
+    # results_ind = nms(torch.tensor(results)[:, :4], torch.tensor(results)[:, 4], 0.6)
+    # new_results = [results[i] for i in results_ind]
+    
+    # Use if running on PC
+    model = YOLO("yolo_models/best_train6.pt")
+    results = model(source = resized_frame, device = "cuda")[0].boxes
+
+    xy = results.xyxyn
+    conf = results.conf
+
+    # combine xy and conf into a list of lists
+    results = []
+    for i in range(len(xy)):
+        results.append([xy[i][1].item(), xy[i][0].item(), xy[i][3].item(), xy[i][2].item(), conf[i].item()])
 
     print(results)
-    new_results = [results[i] for i in results_ind]
 
+    new_results = results
     if len(new_results) == 0:
         cv2.imshow("Detections", resized_frame)
         cv2.waitKey(1)
@@ -55,7 +69,7 @@ try:
         # end = time.time()
         ret, frame = cap.read()
         # convert to BGR888
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         if not ret:
             break
         resized_frame = cv2.resize(frame, (640, 640))
