@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 from collections import deque
 import os
@@ -11,10 +12,11 @@ from .basetrack import BaseTrack, TrackState
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, tlwh, score):
+    def __init__(self, tlwh, score, frame):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=float)
+        self._frame = frame  # Store frame reference
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.is_activated = False
@@ -35,17 +37,18 @@ class STrack(BaseTrack):
             multi_covariance = np.asarray([st.covariance for st in stracks])
             for i, st in enumerate(stracks):
                 if st.state != TrackState.Tracked:
-                    multi_mean[i][7] = 0
+                    multi_mean[i][5:] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
 
-    def activate(self, kalman_filter, frame_id):
+    def activate(self, kalman_filter, frame_id, frame):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
-        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
+        state_vector = self.tlwh_to_state(self._tlwh, self._frame)
+        self.mean, self.covariance = self.kalman_filter.initiate(state_vector)
 
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -56,8 +59,9 @@ class STrack(BaseTrack):
         self.start_frame = frame_id
 
     def re_activate(self, new_track, frame_id, new_id=False):
+        new_measurement = self.tlwh_to_state(new_track.tlwh, frame=self._frame)
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
+            self.mean, self.covariance, new_measurement
         )
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -67,7 +71,7 @@ class STrack(BaseTrack):
             self.track_id = self.next_id()
         self.score = new_track.score
 
-    def update(self, new_track, frame_id):
+    def update(self, new_track, frame_id, frame=None):
         """
         Update a matched track
         :type new_track: STrack
@@ -77,14 +81,43 @@ class STrack(BaseTrack):
         """
         self.frame_id = frame_id
         self.tracklet_len += 1
+        self._frame = frame
 
         new_tlwh = new_track.tlwh
+        self._tlwh = new_tlwh.copy()
+        new_measurement = self.tlwh_to_state(new_tlwh, frame=self._frame)
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+            self.mean, self.covariance, new_measurement
+        )
         self.state = TrackState.Tracked
         self.is_activated = True
 
         self.score = new_track.score
+    
+    def extract_blue_value(self, frame):
+        if frame is None:
+            frame = self._frame  # Fall back to stored frame
+        if frame is None:
+            return 0  # Return default if no frame available
+        
+        BLUE_THRESHOLD = 87
+        x1, y1, x2, y2 = self.tlbr
+        x1 = int(x1 * 640)
+        y1 = int(y1 * 640)
+        x2 = int(x2 * 640)
+        y2 = int(y2 * 640)
+
+        blue_channel = frame[:, :, 0]
+        green_channel = frame[:, :, 1]
+
+        blue_relative_divided = cv2.subtract(blue_channel, green_channel)
+
+        box_blue_relative = blue_relative_divided[y1:y2, x1:x2]
+        box_blue_relative = box_blue_relative[box_blue_relative < BLUE_THRESHOLD]  
+
+        mean_blue_relative = np.mean(box_blue_relative) if box_blue_relative.size > 0 else 0
+
+        return mean_blue_relative
 
     @property
     # @jit(nopython=True)
@@ -92,12 +125,8 @@ class STrack(BaseTrack):
         """Get current position in bounding box format `(top left x, top left y,
                 width, height)`.
         """
-        if self.mean is None:
-            return self._tlwh.copy()
-        ret = self.mean[:4].copy()
-        ret[2] *= ret[3]
-        ret[:2] -= ret[2:] / 2
-        return ret
+        
+        return self._tlwh.copy()
 
     @property
     # @jit(nopython=True)
@@ -109,19 +138,25 @@ class STrack(BaseTrack):
         ret[2:] += ret[:2]
         return ret
 
-    @staticmethod
-    # @jit(nopython=True)
-    def tlwh_to_xyah(tlwh):
-        """Convert bounding box to format `(center x, center y, aspect ratio,
-        height)`, where the aspect ratio is `width / height`.
+    
+    def tlwh_to_state(self, tlwh, frame):
+        """Convert bounding box to format `(center x, center y, blue value)'.
         """
         ret = np.asarray(tlwh).copy()
-        ret[:2] += ret[2:] / 2
-        ret[2] /= ret[3]
+        ret[:2] += ret[2:] / 2 # center x, center y
+        ret[2] = self.extract_blue_value(frame)
+        ret = ret[:3] # remove [3] element
         return ret
 
-    def to_xyah(self):
-        return self.tlwh_to_xyah(self.tlwh)
+    def to_state(self, frame):
+        return self.tlwh_to_state(self.tlwh, frame=frame)
+    
+    def get_center(self):
+        if self.mean is None:
+            return np.array([0, 0])
+        center_x = self.mean[0]
+        center_y = self.mean[1]
+        return np.array([center_x, center_y])
 
     @staticmethod
     # @jit(nopython=True)
@@ -136,6 +171,9 @@ class STrack(BaseTrack):
         ret = np.asarray(tlwh).copy()
         ret[2:] += ret[:2]
         return ret
+    
+    def update_frame(self, frame):
+        self._frame = frame
 
     def __repr__(self):
         return 'OT_{}_({}-{})'.format(self.track_id, self.start_frame, self.end_frame)
@@ -155,12 +193,13 @@ class BYTETracker(object):
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
 
-    def update(self, output_results, img_info, img_size):
+    def update(self, output_results, img_info, img_size, frame):
         self.frame_id += 1
         activated_starcks = []
         refind_stracks = []
         lost_stracks = []
         removed_stracks = []
+        self.current_frame = frame  # Store current frame
 
         if output_results.shape[1] == 5:
             scores = output_results[:, 4]
@@ -185,7 +224,7 @@ class BYTETracker(object):
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, self.current_frame) for
                           (tlbr, s) in zip(dets, scores_keep)]
         else:
             detections = []
@@ -210,9 +249,10 @@ class BYTETracker(object):
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
+            # track.update_frame(self.current_frame)  # Update frame reference
             det = detections[idet]
             if track.state == TrackState.Tracked:
-                track.update(detections[idet], self.frame_id)
+                track.update(detections[idet], self.frame_id, frame=self.current_frame)
                 activated_starcks.append(track)
             else:
                 track.re_activate(det, self.frame_id, new_id=False)
@@ -222,7 +262,7 @@ class BYTETracker(object):
         # association the untrack to the low score detections
         if len(dets_second) > 0:
             '''Detections'''
-            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
+            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, frame=self.current_frame) for
                           (tlbr, s) in zip(dets_second, scores_second)]
         else:
             detections_second = []
@@ -231,9 +271,10 @@ class BYTETracker(object):
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
+            track.update_frame(self.current_frame)  # Update frame reference
             det = detections_second[idet]
             if track.state == TrackState.Tracked:
-                track.update(det, self.frame_id)
+                track.update(det, self.frame_id, frame=self.current_frame)
                 activated_starcks.append(track)
             else:
                 track.re_activate(det, self.frame_id, new_id=False)
@@ -264,7 +305,7 @@ class BYTETracker(object):
             track = detections[inew]
             if track.score < self.det_thresh:
                 continue
-            track.activate(self.kalman_filter, self.frame_id)
+            track.activate(self.kalman_filter, self.frame_id, self.current_frame)
             activated_starcks.append(track)
         """ Step 5: Update state"""
         for track in self.lost_stracks:

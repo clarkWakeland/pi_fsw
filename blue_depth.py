@@ -1,6 +1,19 @@
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
+from yolox.tracker.byte_tracker import BYTETracker, STrack
+import argparse
+from torchvision.ops import nms
+
+parser = argparse.ArgumentParser("basic args")
+parser.add_argument("--track_thresh", type=float, default=0.5, help="tracking confidence threshold")
+parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
+parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
+parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
+parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
+
+btrack = BYTETracker(args=parser.parse_args())
 
 cap = cv2.VideoCapture('/home/clark/Desktop/dataset/validation_vid.mp4')
 model = YOLO("yolo_models/best_train6.pt")
