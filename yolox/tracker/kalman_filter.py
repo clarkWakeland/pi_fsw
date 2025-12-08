@@ -188,6 +188,7 @@ class KalmanFilter(object):
         motion_cov = np.asarray(motion_cov)
 
         mean = np.dot(mean, self._motion_mat.T)
+        print(mean)
         left = np.dot(self._motion_mat, covariance).transpose((1, 0, 2))
         covariance = np.dot(left, self._motion_mat.T) + motion_cov
 

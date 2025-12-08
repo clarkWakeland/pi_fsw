@@ -48,7 +48,7 @@ def process_image():
         cv2.imshow("Detections", resized_frame)
         cv2.waitKey(1)
         return
-    tracks = btrack.update(np.array(new_results), [640, 640], [640, 640], frame=resized_frame)
+    tracks = btrack.update(np.array(new_results), [640, 640], [640, 640])
 
 try:
     while True:
@@ -87,11 +87,14 @@ try:
 
                 conf = track.score
                 id = track.track_id
+                x, y, a, h = track.tlwh_to_xyah(track.tlwh)
                 cv2.rectangle(resized_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 # put track ID and confidence
                 cv2.putText(resized_frame, f"ID: {id}", (int(x1), int(y1)-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 cv2.putText(resized_frame, f"{conf:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                cv2.putText(resized_frame, f"BlueRel: {mean_blue_relative:.2f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                # put x, y, a, and h on bounding box
+                cv2.putText(resized_frame, f"x:{x:.1f} y:{y:.1f} a:{a:.2f} h:{h:.1f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                # cv2.putText(resized_frame, f"BlueRel: {mean_blue_relative:.2f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         else:
             for result in new_results:
                 y1, x1, y2, x2, conf = result
