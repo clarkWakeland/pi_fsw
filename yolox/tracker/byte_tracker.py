@@ -21,6 +21,7 @@ class STrack(BaseTrack):
 
         self.score = score
         self.tracklet_len = 0
+        self.predicted = None  # For storing predicted bbox
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -77,6 +78,7 @@ class STrack(BaseTrack):
         """
         self.frame_id = frame_id
         self.tracklet_len += 1
+        self.predicted = self.mean.copy()
 
         new_tlwh = new_track.tlwh
         self.mean, self.covariance = self.kalman_filter.update(

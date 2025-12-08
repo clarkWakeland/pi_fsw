@@ -88,12 +88,23 @@ try:
                 conf = track.score
                 id = track.track_id
                 x, y, a, h = track.tlwh_to_xyah(track.tlwh)
+                # draw predicted rectangle from x, y, a, h and draw it in red
+                if track.predicted is not None:
+                    print(track.predicted)
+                    x_pred, y_pred, a_pred, h_pred = track.predicted[:4]
+                    x1_red = int(x_pred * 640 - a_pred * h_pred / 2 * 640)
+                    y1_red = int(y_pred * 640 - h_pred / 2 * 640)
+                    x2_red = int(x_pred * 640 + a_pred * h_pred / 2 * 640)
+                    y2_red = int(y_pred * 640 + h_pred / 2 * 640)
+                    cv2.rectangle(resized_frame, (x1_red, y1_red), (x2_red, y2_red), (0, 0, 255), 2)
+
+                # draw actual detection box in green
                 cv2.rectangle(resized_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 # put track ID and confidence
                 cv2.putText(resized_frame, f"ID: {id}", (int(x1), int(y1)-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 cv2.putText(resized_frame, f"{conf:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 # put x, y, a, and h on bounding box
-                cv2.putText(resized_frame, f"x:{x:.1f} y:{y:.1f} a:{a:.2f} h:{h:.1f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.putText(resized_frame, f"x:{x:.3f} y:{y:.3f} a:{a:.3f} h:{h:.3f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 # cv2.putText(resized_frame, f"BlueRel: {mean_blue_relative:.2f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         else:
             for result in new_results:
