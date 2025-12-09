@@ -17,7 +17,7 @@ import numpy as np
 # picam_config = picam.create_preview_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1))
 # picam.configure(picam_config)
 # picam.start()
-cap = cv2.VideoCapture('/home/clark/Desktop/dataset/validation_vid.mp4')
+cap = cv2.VideoCapture('validation_vid.mp4')
 # Initialize the BYTETracker
 parser = argparse.ArgumentParser("basic args")
 parser.add_argument("--track_thresh", type=float, default=0.5, help="tracking confidence threshold")
@@ -31,7 +31,8 @@ frame_count = 0
 tracks = []
 useByteTrack = True
 new_results = []
-print("working")
+BLUE_THRESHOLD = 87 # Adjust this threshold based on your requirements. 87 experimentally works well
+
 def process_image():
     global tracks, new_results
     # Use if running on pi
@@ -76,6 +77,11 @@ try:
         if frame_count % 3 == 0:
             process_image()
         
+        blue_channel = resized_frame[:, :, 2]
+        green_channel = resized_frame[:, :, 1]
+
+        blue_relative_channel = cv2.subtract(blue_channel, green_channel)
+
         if useByteTrack:
 
             for track in tracks:
@@ -85,12 +91,18 @@ try:
                 y1 *= 640
                 x2 *= 640
                 y2 *= 640
+                
+                box_blue_relative = blue_relative_channel[int(y1):int(y2), int(x1):int(x2)]
+                box_blue_relative = box_blue_relative[box_blue_relative < BLUE_THRESHOLD]
+                mean_blue_relative = np.mean(box_blue_relative) if box_blue_relative.size > 0 else 0
+
                 conf = track.score
                 id = track.track_id
                 cv2.rectangle(resized_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 # put track ID and confidence
                 cv2.putText(resized_frame, f"ID: {id}", (int(x1), int(y1)-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 cv2.putText(resized_frame, f"{conf:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.putText(resized_frame, f"BlueRel: {mean_blue_relative:.2f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         else:
             for result in new_results:
                 y1, x1, y2, x2, conf = result
@@ -102,6 +114,7 @@ try:
                 cv2.putText(resized_frame, f"{conf:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         cv2.imshow("Detections", resized_frame)
         cv2.waitKey(1)
+        input("Press enter to continue...")
         frame += 1
 
 
