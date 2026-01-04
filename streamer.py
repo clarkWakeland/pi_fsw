@@ -34,29 +34,31 @@ class Websocket_handler():
             "get-tracking-status": self.handle_get_tracking_status,
             "manual-control": self.handle_manual_control,
             "autofocus": self.handle_autofocus,
-            "toggle-auto-acquire": self.handle_auto_acquire
+            "toggle-auto-acquire": self.handle_auto_acquire,
+            "show-boxes": self.handle_show_boxes
         }
 
     async def handle_box_draw(self, data, websocket):
         print(data) # TODO: implement
+        box = data['box']
+        box_data = [box['x'], box['y'], box['width'], box['height']]
+        self.tracker.user_intent.set_ROI(box_data)  # box is [x, y, w, h]
 
     async def handle_canvas_click(self, data, websocket):
         print("handling_canvas_click")
-        if self.runML_pi:
-            coords = data["position"]
-            x = float(coords['x'])
-            y = float(coords['y'])
-            self.tracker.start_tracking(x, y)
+
+        coords = data["position"]
+        x = float(coords['x'])
+        y = float(coords['y'])
+        self.tracker.user_intent.set_click_coordinates(x, y)
+        self.tracker.user_intent.clear_ROI()
 
     async def handle_toggle_tracking(self, data, websocket):
-        self.runML_pi = not self.runML_pi
-        self.tracker.runML = self.runML_pi
-        if not self.runML_pi:
-            self.tracker.stop_tracking()
-        await websocket.send(json.dumps({"tracking": self.runML_pi}))
+        self.tracker.user_intent.set_ML()
+        await websocket.send(json.dumps({"tracking_primed": self.tracker.user_intent.runML}))
 
     async def handle_get_tracking_status(self, data, websocket):
-        await websocket.send(json.dumps({"tracking": self.runML_pi}))
+        await websocket.send(json.dumps({"tracking_primed": self.tracker.user_intent.runML}))
 
     async def handle_manual_control(self, data, websocket):
         self.tracker.manual_control(data['direction'])
@@ -66,12 +68,14 @@ class Websocket_handler():
         print("autofocus command received")
 
     async def handle_auto_acquire(self, data, websocket):
-        self.tracker.auto_acquire = not self.tracker.auto_acquire
-        print(f"auto acquire set to {self.tracker.auto_acquire}")
+        self.tracker.user_intent.auto_acquire = not self.tracker.user_intent.auto_acquire
+        print(f"auto acquire set to {self.tracker.user_intent.auto_acquire}")
 
-    
+    async def handle_show_boxes(self, data, websocket):
+        self.tracker.show_boxes = not self.tracker.show_boxes
+        print(f"show boxes set to {self.tracker.show_boxes}")
+
     def read_voltage(self) -> float:
-
         val = bus.read_word_data(ADDR, VOLTAGE_REG)
         swapped = ((val << 8) & 0xFF00) + (val >> 8)
         return (swapped >> 3) * 1.25 / 1000.0
@@ -113,7 +117,7 @@ class CameraStreamer:
     def __init__(self):
         subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
         self.picam2 = Picamera2()
-        encoder = H264Encoder(qp = 10, iperiod=10)
+        encoder = H264Encoder(bitrate=15_000_000, iperiod=30)
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',

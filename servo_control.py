@@ -14,6 +14,8 @@ class MotorControl:
         self.last_x_time = time.time()
         self.last_y_time = time.time()
         self.ws_callback = ws_callback
+        self.HIGH_CLAMP_CONTROL = 3
+        self.LOW_CLAMP_CONTROL = -3
 
         # init angles
         pantilthat.pan(0)
@@ -42,7 +44,7 @@ class MotorControl:
             # calculate derivative term
             d = self.calc_derivative(delta, self.last_x_delta, self.last_x_time)
 
-            control_output = p + d
+            control_output = self.clamp_control(p + d)
             new_angle = pantilthat.get_pan() + control_output
             if abs(new_angle) > 90 :
                 print('servo at max angle')
@@ -58,11 +60,15 @@ class MotorControl:
 
             # calculate derivative term
             d = self.calc_derivative(delta, self.last_y_delta, self.last_y_time)
-            control_output = p + d
-
+            
+            control_output = self.clamp_control(p + d)
             new_angle = pantilthat.get_tilt() + control_output
             if abs(new_angle) > 90 :
                 print('servo at max angle')
                 return
             
             pantilthat.tilt(new_angle)
+
+    def clamp_control(self, angle):
+        return max(self.LOW_CLAMP_CONTROL, min(self.HIGH_CLAMP_CONTROL, angle))
+
