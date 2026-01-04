@@ -76,7 +76,6 @@ class Websocket_handler():
         print(f"show boxes set to {self.tracker.show_boxes}")
 
     def read_voltage(self) -> float:
-
         val = bus.read_word_data(ADDR, VOLTAGE_REG)
         swapped = ((val << 8) & 0xFF00) + (val >> 8)
         return (swapped >> 3) * 1.25 / 1000.0
@@ -118,7 +117,7 @@ class CameraStreamer:
     def __init__(self):
         subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
         self.picam2 = Picamera2()
-        encoder = H264Encoder(qp = 10, iperiod=10)
+        encoder = H264Encoder(bitrate=15_000_000, iperiod=30)
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',

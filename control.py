@@ -34,7 +34,7 @@ class PersonTracking:
         self.x_delta = 0
         self.y_delta = 0
         self.lost_weight = 1
-        self.hailo = Hailo('hailo_models/best_train6.hef')
+        self.hailo = Hailo('hailo_models/alto_long_alpha.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
         threading.Thread(target = self.tracking_servo, daemon=True).start()
@@ -44,7 +44,7 @@ class PersonTracking:
         parser = argparse.ArgumentParser("basic args")
         parser.add_argument("--track_thresh", type=float, default=0.5, help="tracking confidence threshold")
         parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
-        parser.add_argument("--match_thresh", type=float, default=0.80, help="matching threshold for tracking")
+        parser.add_argument("--match_thresh", type=float, default=0.95, help="matching threshold for tracking")
         parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
         parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
 
@@ -74,7 +74,7 @@ class PersonTracking:
                         logger.info(self.tracking_object.tlbr)
                         self.adjust_delta(self.tracking_object.tlbr)
 
-            time.sleep(0.1) # run inference 10 times/sec for now, can be adjusted
+            time.sleep(0.05) # run inference 20 times/sec for now, can be adjusted
         
     def process_image(self, image):
         ''' 
