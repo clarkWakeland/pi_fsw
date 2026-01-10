@@ -34,7 +34,7 @@ class PersonTracking:
         self.x_delta = 0
         self.y_delta = 0
         self.lost_weight = 1
-        self.hailo = Hailo('hailo_models/alto_long_alpha.hef')
+        self.hailo = Hailo('hailo_models/aquatic_alpha.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
         threading.Thread(target = self.tracking_servo, daemon=True).start()
