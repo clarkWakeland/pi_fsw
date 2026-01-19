@@ -1,6 +1,4 @@
 {
-    "device_version": {
-        "name": "Aquatic Alpha",
-        "version_number" : "0.1.1"
-    }
+    "name": "Aquatic Alpha",
+    "version_number" : "0.1.1"
 }
