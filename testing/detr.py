@@ -1,7 +1,6 @@
-# from libcamera import Transform 
-from ultralytics import YOLO
-# from picamera2 import Picamera2
-# from picamera2.devices import Hailo
+from libcamera import Transform 
+from picamera2 import Picamera2
+from picamera2.devices import Hailo
 import torch
 from torchvision.ops import nms
 from yolox.tracker.byte_tracker import BYTETracker, STrack
@@ -10,7 +9,7 @@ import cv2
 import time
 import numpy as np
 
-# hailo = Hailo('hailo_models/best_train6.hef')
+hailo = Hailo('hailo_models/aquatic_alphaV2.hef')
 
 # picam = Picamera2()
 # # Just make the format RGB
@@ -36,23 +35,23 @@ BLUE_THRESHOLD = 87 # Adjust this threshold based on your requirements. 87 exper
 def process_image():
     global tracks, new_results
     # Use if running on pi
-    # results = hailo.run(resized_frame)[0] 
-    # results_ind = nms(torch.tensor(results)[:, :4], torch.tensor(results)[:, 4], 0.6)
-    # new_results = [results[i] for i in results_ind]
+    results = hailo.run(resized_frame)[0] 
+    results_ind = nms(torch.tensor(results)[:, :4], torch.tensor(results)[:, 4], 0.6)
+    new_results = [results[i] for i in results_ind]
     
     # Use if running on PC
-    model = YOLO("yolo_models/best_train6.pt")
-    results = model(source = resized_frame, device = "cuda")[0].boxes
+    # model = YOLO("yolo_models/best_train6.pt")
+    # results = model(source = resized_frame, device = "cuda")[0].boxes
 
-    xy = results.xyxyn
-    conf = results.conf
+    # xy = results.xyxyn
+    # conf = results.conf
 
     # combine xy and conf into a list of lists
-    results = []
-    for i in range(len(xy)):
-        results.append([xy[i][1].item(), xy[i][0].item(), xy[i][3].item(), xy[i][2].item(), conf[i].item()])
+    # results = []
+    # for i in range(len(xy)):
+    #     results.append([xy[i][1].item(), xy[i][0].item(), xy[i][3].item(), xy[i][2].item(), conf[i].item()])
 
-    print(results)
+    # print(results)
 
     new_results = results
     if len(new_results) == 0:
@@ -74,7 +73,7 @@ try:
         if not ret:
             break
         resized_frame = cv2.resize(frame, (640, 640))
-        if frame_count % 3 == 0:
+        if frame_count % 1 == 0:
             process_image()
         
         blue_channel = resized_frame[:, :, 2]
@@ -92,17 +91,12 @@ try:
                 x2 *= 640
                 y2 *= 640
                 
-                box_blue_relative = blue_relative_channel[int(y1):int(y2), int(x1):int(x2)]
-                box_blue_relative = box_blue_relative[box_blue_relative < BLUE_THRESHOLD]
-                mean_blue_relative = np.mean(box_blue_relative) if box_blue_relative.size > 0 else 0
-
                 conf = track.score
                 id = track.track_id
                 cv2.rectangle(resized_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 # put track ID and confidence
                 cv2.putText(resized_frame, f"ID: {id}", (int(x1), int(y1)-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 cv2.putText(resized_frame, f"{conf:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                cv2.putText(resized_frame, f"BlueRel: {mean_blue_relative:.2f}", (int(x1), int(y2)+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         else:
             for result in new_results:
                 y1, x1, y2, x2, conf = result
@@ -115,7 +109,7 @@ try:
         cv2.imshow("Detections", resized_frame)
         cv2.waitKey(1)
         input("Press enter to continue...")
-        frame += 1
+        frame_count += 1
 
 
 except KeyboardInterrupt:
