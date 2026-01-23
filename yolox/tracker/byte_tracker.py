@@ -15,6 +15,7 @@ class STrack(BaseTrack):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=float)
+        self._wh = self._tlwh[2:4].copy()
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.is_activated = False
@@ -26,7 +27,7 @@ class STrack(BaseTrack):
     def predict(self):
         mean_state = self.mean.copy()
         if self.state != TrackState.Tracked:
-            mean_state[7] = 0
+            mean_state[2:4] = 0
         self.mean, self.covariance = self.kalman_filter.predict(mean_state, self.covariance)
 
     @staticmethod
@@ -36,7 +37,7 @@ class STrack(BaseTrack):
             multi_covariance = np.asarray([st.covariance for st in stracks])
             for i, st in enumerate(stracks):
                 if st.state != TrackState.Tracked:
-                    multi_mean[i][7] = 0
+                    multi_mean[i][2:4] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
                 stracks[i].mean = mean
@@ -46,7 +47,8 @@ class STrack(BaseTrack):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
-        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
+        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xy(self._tlwh))
+        self._wh = self._tlwh[2:4].copy()
 
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -57,8 +59,9 @@ class STrack(BaseTrack):
         self.start_frame = frame_id
 
     def re_activate(self, new_track, frame_id, new_id=False):
+        self._wh = new_track.tlwh[2:4].copy()
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
+            self.mean, self.covariance, self.tlwh_to_xy(new_track.tlwh)
         )
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -81,8 +84,9 @@ class STrack(BaseTrack):
         self.predicted = self.mean.copy()
 
         new_tlwh = new_track.tlwh
+        self._wh = new_tlwh[2:4].copy()
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+            self.mean, self.covariance, self.tlwh_to_xy(new_tlwh))
         self.state = TrackState.Tracked
         self.is_activated = True
 
@@ -96,10 +100,10 @@ class STrack(BaseTrack):
         """
         if self.mean is None:
             return self._tlwh.copy()
-        ret = self.mean[:4].copy()
-        ret[2] *= ret[3]
-        ret[:2] -= ret[2:] / 2
-        return ret
+        center = self.mean[:2]
+        wh = self._wh
+        top_left = center - wh / 2
+        return np.r_[top_left, wh]
 
     @property
     # @jit(nopython=True)
@@ -113,17 +117,15 @@ class STrack(BaseTrack):
 
     @staticmethod
     # @jit(nopython=True)
-    def tlwh_to_xyah(tlwh):
-        """Convert bounding box to format `(center x, center y, aspect ratio,
-        height)`, where the aspect ratio is `width / height`.
+    def tlwh_to_xy(tlwh):
+        """Convert bounding box to format `(center x, center y)`.
         """
         ret = np.asarray(tlwh).copy()
         ret[:2] += ret[2:] / 2
-        ret[2] /= ret[3]
-        return ret
+        return ret[:2]
 
-    def to_xyah(self):
-        return self.tlwh_to_xyah(self.tlwh)
+    def to_xy(self):
+        return self.tlwh_to_xy(self.tlwh)
 
     @staticmethod
     # @jit(nopython=True)
