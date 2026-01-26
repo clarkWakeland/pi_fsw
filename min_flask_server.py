@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from pathlib import Path
 import json
+import apply_update
 
 app = Flask(__name__)
 
@@ -22,9 +23,13 @@ def update_firmware():
     firmware_file = request.files['firmware']
     firmware_file.save('/opt/update/firmware_update.tar.gz')
 
-    # unzip tarball    
+    try:
+        apply_update.main()
+    except Exception as e:
+        return f"Update failed: {str(e)}\n", 500
 
     return "Firmware update initiated.\n", 202
+
     
 
 if __name__ == '__main__':

@@ -1,12 +1,9 @@
-from libcamera import Transform 
-from picamera2 import Picamera2
 from picamera2.devices import Hailo
 import torch
 from torchvision.ops import nms
 from yolox.tracker.byte_tracker import BYTETracker, STrack
 import argparse
 import cv2
-import time
 import numpy as np
 
 hailo = Hailo('hailo_models/aquatic_alphaV2.hef')
@@ -16,12 +13,12 @@ hailo = Hailo('hailo_models/aquatic_alphaV2.hef')
 # picam_config = picam.create_preview_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1))
 # picam.configure(picam_config)
 # picam.start()
-cap = cv2.VideoCapture('validation_vid.mp4')
+cap = cv2.VideoCapture('shorter_val_1_22.mp4')
 # Initialize the BYTETracker
 parser = argparse.ArgumentParser("basic args")
-parser.add_argument("--track_thresh", type=float, default=0.5, help="tracking confidence threshold")
-parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
-parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
+parser.add_argument("--track_thresh", type=float, default=0.4, help="tracking confidence threshold")
+parser.add_argument("--track_buffer", type=int, default=45, help="the frames for keep lost tracks")
+parser.add_argument("--match_thresh", type=float, default=0.80, help="matching threshold for tracking")
 parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
 parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
 
@@ -53,10 +50,10 @@ def process_image():
 
     # print(results)
 
-    new_results = results
+    # new_results = results
     if len(new_results) == 0:
-        cv2.imshow("Detections", resized_frame)
-        cv2.waitKey(1)
+        cv2.imshow("Detection 12", resized_frame)
+        cv2.waitKey(0)
         return
     tracks = btrack.update(np.array(new_results), [640, 640], [640, 640])
 
@@ -69,17 +66,12 @@ try:
         # end = time.time()
         ret, frame = cap.read()
         # convert to BGR888
-        # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         if not ret:
             break
         resized_frame = cv2.resize(frame, (640, 640))
         if frame_count % 1 == 0:
             process_image()
-        
-        blue_channel = resized_frame[:, :, 2]
-        green_channel = resized_frame[:, :, 1]
-
-        blue_relative_channel = cv2.subtract(blue_channel, green_channel)
 
         if useByteTrack:
 
@@ -93,6 +85,20 @@ try:
                 
                 conf = track.score
                 id = track.track_id
+                x, y = track.to_xy()
+                # draw predicted center + velocity vector in red
+                if track.predicted is not None:
+                    y_pred, x_pred, vy_pred, vx_pred = track.predicted
+                    print(track.predicted)
+                    center = (int(x_pred * 640), int(y_pred * 640))
+                    velocity_end = (
+                        int(((x_pred + vx_pred*10)*640)),
+                        int(((y_pred + vy_pred*10)*640)),
+                    )
+                    print(center, velocity_end)
+                    cv2.circle(resized_frame, center, 4, (0, 0, 255), -1)
+                    cv2.arrowedLine(resized_frame, center, velocity_end, (0, 0, 255), 2, tipLength=0.2)
+                
                 cv2.rectangle(resized_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 # put track ID and confidence
                 cv2.putText(resized_frame, f"ID: {id}", (int(x1), int(y1)-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -106,9 +112,11 @@ try:
                 y2 *= 640
                 cv2.rectangle(resized_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 cv2.putText(resized_frame, f"{conf:.2f}", (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        cv2.imshow("Detections", resized_frame)
-        cv2.waitKey(1)
-        input("Press enter to continue...")
+        cv2.imshow("Detection 12", resized_frame)
+        cv2.waitKey(0)
+        # quit if user presses 'q'
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
         frame_count += 1
 
 
