@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import time
 import os
 import shutil
 import subprocess
@@ -83,7 +84,7 @@ def main():
         shutil.rmtree(STAGING)
 
         print(f"Update applied successfully: {target}")
-        
+        time.sleep(2)
         # reboot the device to ensure all changes take effect
         run(["reboot"])
         return True
