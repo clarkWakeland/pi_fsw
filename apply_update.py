@@ -83,6 +83,9 @@ def main():
         shutil.rmtree(STAGING)
 
         print(f"Update applied successfully: {target}")
+        
+        # reboot the device to ensure all changes take effect
+        run(["reboot"])
         return True
         
     except Exception as e:
