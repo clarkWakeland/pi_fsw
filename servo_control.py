@@ -63,7 +63,7 @@ class MotorControl:
             
             control_output = self.clamp_control(p + d)
             new_angle = pantilthat.get_tilt() + control_output
-            if abs(new_angle) > 90 :
+            if new_angle > 90 or new_angle < -5:
                 print('servo at max angle')
                 return
             

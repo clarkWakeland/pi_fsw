@@ -200,7 +200,7 @@ class PersonTracking:
                 if abs(self.x_delta) > 20:
                     self.mc.set_angle('x', self.x_delta)
 
-            time.sleep(0.075)
+            time.sleep(0.033)
 
     def manual_control(self, message):
         if self.user_intent.runML:
