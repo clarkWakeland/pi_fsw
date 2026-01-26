@@ -194,10 +194,10 @@ class PersonTracking:
     def tracking_servo(self):
         while True:
             if self.tracking_object:
-                if abs(self.y_delta) > 20:
+                if abs(self.y_delta) > 15:
                     self.mc.set_angle('y', self.y_delta)
 
-                if abs(self.x_delta) > 20:
+                if abs(self.x_delta) > 15:
                     self.mc.set_angle('x', self.x_delta)
 
             time.sleep(0.033)
