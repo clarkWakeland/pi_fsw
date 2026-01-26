@@ -1,3 +1,5 @@
+from libcamera import Transform 
+from picamera2 import Picamera2
 from picamera2.devices import Hailo
 import torch
 from torchvision.ops import nms
@@ -71,6 +73,7 @@ try:
             break
         resized_frame = cv2.resize(frame, (640, 640))
         if frame_count % 1 == 0:
+        if frame_count % 1 == 0:
             process_image()
 
         if useByteTrack:
@@ -82,6 +85,7 @@ try:
                 y1 *= 640
                 x2 *= 640
                 y2 *= 640
+                
                 
                 conf = track.score
                 id = track.track_id
