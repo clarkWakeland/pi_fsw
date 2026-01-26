@@ -10,9 +10,9 @@ UPDATE_ROOT = "/opt/update"
 PAYLOAD = f"{UPDATE_ROOT}/firmware_update.tar.gz"
 STAGING = f"{UPDATE_ROOT}/staging"
 
-CAM_ROOT = "/opt/fsw"
-RELEASES = f"{CAM_ROOT}/releases"
-CURRENT_LINK = f"{CAM_ROOT}/current"
+
+RELEASES = "/opt/releases"
+CURRENT_LINK = "/opt/fsw"
 
 SERVICE = "streamer.service"
 
