@@ -115,7 +115,7 @@ class Websocket_handler():
 
 class CameraStreamer:
     def __init__(self):
-        subprocess.Popen(["./mediamtx"], cwd="../../Downloads", )
+        subprocess.Popen(["./mediamtx"], cwd="/home/clark64/Downloads", )
         self.picam2 = Picamera2()
         encoder = H264Encoder(bitrate=15_000_000, iperiod=30)
         self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))

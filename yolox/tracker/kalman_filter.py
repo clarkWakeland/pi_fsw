@@ -24,21 +24,21 @@ class KalmanFilter(object):
     """
     A simple Kalman filter for tracking bounding boxes in image space.
 
-    The 8-dimensional state space
+    The 4-dimensional state space
 
-        x, y, a, h, vx, vy, va, vh
+        x, y, vx, vy
 
-    contains the bounding box center position (x, y), aspect ratio a, height h,
-    and their respective velocities.
+    contains the bounding box center position (x, y) and their respective
+    velocities.
 
     Object motion follows a constant velocity model. The bounding box location
-    (x, y, a, h) is taken as direct observation of the state space (linear
+    (x, y) is taken as direct observation of the state space (linear
     observation model).
 
     """
 
     def __init__(self):
-        ndim, dt = 4, 1.
+        ndim, dt = 2, 1.
 
         # Create Kalman filter model matrices.
         self._motion_mat = np.eye(2 * ndim, 2 * ndim)
@@ -51,8 +51,6 @@ class KalmanFilter(object):
         # the model. This is a bit hacky.
         self._std_weight_position = 1. / 20
         self._std_weight_velocity = 1. / 160
-        self._std_height = 1e2
-        self._std_aspect = 1e2
 
     def initiate(self, measurement):
         """Create track from unassociated measurement.
@@ -60,13 +58,12 @@ class KalmanFilter(object):
         Parameters
         ----------
         measurement : ndarray
-            Bounding box coordinates (x, y, a, h) with center position (x, y),
-            aspect ratio a, and height h.
+            Bounding box center position (x, y).
 
         Returns
         -------
         (ndarray, ndarray)
-            Returns the mean vector (8 dimensional) and covariance matrix (8x8
+            Returns the mean vector (4 dimensional) and covariance matrix (4x4
             dimensional) of the new track. Unobserved velocities are initialized
             to 0 mean.
 
@@ -76,14 +73,10 @@ class KalmanFilter(object):
         mean = np.r_[mean_pos, mean_vel]
 
         std = [
-            2 * self._std_weight_position * measurement[3],
-            2 * self._std_weight_position * measurement[3],
-            self._std_aspect,
-            2 * self._std_weight_position * measurement[3] * self._std_height,
-            10 * self._std_weight_velocity * measurement[3],
-            10 * self._std_weight_velocity * measurement[3],
-            self._std_aspect,
-            10 * self._std_weight_velocity * measurement[3] * self._std_height] 
+            2 * self._std_weight_position,
+            2 * self._std_weight_position,
+            10 * self._std_weight_velocity,
+            10 * self._std_weight_velocity]
         covariance = np.diag(np.square(std))
         return mean, covariance
 
@@ -93,10 +86,10 @@ class KalmanFilter(object):
         Parameters
         ----------
         mean : ndarray
-            The 8 dimensional mean vector of the object state at the previous
+            The 4 dimensional mean vector of the object state at the previous
             time step.
         covariance : ndarray
-            The 8x8 dimensional covariance matrix of the object state at the
+            The 4x4 dimensional covariance matrix of the object state at the
             previous time step.
 
         Returns
@@ -107,15 +100,11 @@ class KalmanFilter(object):
 
         """
         std_pos = [
-            self._std_weight_position * mean[3],
-            self._std_weight_position * mean[3],
-            self._std_aspect,
-            self._std_weight_position * mean[3] * self._std_height]
+            self._std_weight_position,
+            self._std_weight_position]
         std_vel = [
-            self._std_weight_velocity * mean[3],
-            self._std_weight_velocity * mean[3],
-            self._std_aspect,
-            self._std_weight_velocity * mean[3] * self._std_height]
+            self._std_weight_velocity,
+            self._std_weight_velocity]
         motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
 
         #mean = np.dot(self._motion_mat, mean)
@@ -131,9 +120,9 @@ class KalmanFilter(object):
         Parameters
         ----------
         mean : ndarray
-            The state's mean vector (8 dimensional array).
+            The state's mean vector (4 dimensional array).
         covariance : ndarray
-            The state's covariance matrix (8x8 dimensional).
+            The state's covariance matrix (4x4 dimensional).
 
         Returns
         -------
@@ -143,10 +132,8 @@ class KalmanFilter(object):
 
         """
         std = [
-            self._std_weight_position * mean[3],
-            self._std_weight_position * mean[3],
-            self._std_aspect,
-            self._std_weight_position * mean[3] * self._std_height]
+            self._std_weight_position,
+            self._std_weight_position]
         innovation_cov = np.diag(np.square(std))
 
         mean = np.dot(self._update_mat, mean)
@@ -159,10 +146,10 @@ class KalmanFilter(object):
         Parameters
         ----------
         mean : ndarray
-            The Nx8 dimensional mean matrix of the object states at the previous
+            The Nx4 dimensional mean matrix of the object states at the previous
             time step.
         covariance : ndarray
-            The Nx8x8 dimensional covariance matrics of the object states at the
+            The Nx4x4 dimensional covariance matrics of the object states at the
             previous time step.
         Returns
         -------
@@ -171,15 +158,11 @@ class KalmanFilter(object):
             state. Unobserved velocities are initialized to 0 mean.
         """
         std_pos = [
-            self._std_weight_position * mean[:, 3],
-            self._std_weight_position * mean[:, 3],
-            self._std_aspect * np.ones_like(mean[:, 3]),
-            self._std_weight_position * mean[:, 3] * self._std_height]
+            self._std_weight_position * np.ones_like(mean[:, 0]),
+            self._std_weight_position * np.ones_like(mean[:, 0])]
         std_vel = [
-            self._std_weight_velocity * mean[:, 3],
-            self._std_weight_velocity * mean[:, 3],
-            self._std_aspect * np.ones_like(mean[:, 3]),
-            self._std_weight_velocity * mean[:, 3] * self._std_height]
+            self._std_weight_velocity * np.ones_like(mean[:, 0]),
+            self._std_weight_velocity * np.ones_like(mean[:, 0])]
         sqr = np.square(np.r_[std_pos, std_vel]).T
 
         motion_cov = []
@@ -188,6 +171,7 @@ class KalmanFilter(object):
         motion_cov = np.asarray(motion_cov)
 
         mean = np.dot(mean, self._motion_mat.T)
+        print(mean)
         left = np.dot(self._motion_mat, covariance).transpose((1, 0, 2))
         covariance = np.dot(left, self._motion_mat.T) + motion_cov
 
@@ -199,13 +183,12 @@ class KalmanFilter(object):
         Parameters
         ----------
         mean : ndarray
-            The predicted state's mean vector (8 dimensional).
+            The predicted state's mean vector (4 dimensional).
         covariance : ndarray
-            The state's covariance matrix (8x8 dimensional).
+            The state's covariance matrix (4x4 dimensional).
         measurement : ndarray
-            The 4 dimensional measurement vector (x, y, a, h), where (x, y)
-            is the center position, a the aspect ratio, and h the height of the
-            bounding box.
+            The 2 dimensional measurement vector (x, y), where (x, y)
+            is the center position of the bounding box.
 
         Returns
         -------
@@ -236,13 +219,13 @@ class KalmanFilter(object):
         Parameters
         ----------
         mean : ndarray
-            Mean vector over the state distribution (8 dimensional).
+            Mean vector over the state distribution (4 dimensional).
         covariance : ndarray
-            Covariance of the state distribution (8x8 dimensional).
+            Covariance of the state distribution (4x4 dimensional).
         measurements : ndarray
-            An Nx4 dimensional matrix of N measurements, each in
-            format (x, y, a, h) where (x, y) is the bounding box center
-            position, a the aspect ratio, and h the height.
+            An Nx2 dimensional matrix of N measurements, each in
+            format (x, y) where (x, y) is the bounding box center
+            position.
         only_position : Optional[bool]
             If True, distance computation is done with respect to the bounding
             box center position only.
