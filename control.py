@@ -270,12 +270,13 @@ class PersonTracking:
 
                 if self.lost_frames > 20: # lost for more than 2 seconds
                     self.tracking_object = None                
-                    self.user_intent.set_ML(False)
+                    self.lost_frames = 0
+                    self.lost_weight = 1
                     self.y_delta = 0
                     self.x_delta = 0
                     logger.info("Lost track of object")
                     self.ws_callback({"tracking_lost": "Lost Object"})
-                    self._set_state("LOST")
+                    self._set_state("PRIMED")
         elif self.user_intent.runML:
             self._set_state("PRIMED")
 
