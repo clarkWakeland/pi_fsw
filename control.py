@@ -29,7 +29,6 @@ class PersonTracking:
         self.tracking_object = None
 
         self.ws_callback = ws_callback
-        self.show_boxes = False
         self.camera = camera
         self.x_delta = 0
         self.y_delta = 0
@@ -181,13 +180,12 @@ class PersonTracking:
 
         self.update_tracking_object(tracks)
 
-        if self.show_boxes:
-            boxes = []
-            for track in tracks:
-                currently_tracking = (self.tracking_object is not None and track.track_id == self.tracking_object.track_id)
-                boxes.append({'x1': track.tlbr[0], 'y1': track.tlbr[1], 'x2': track.tlbr[2], 'y2': track.tlbr[3], 'id': track.track_id, 'confidence': str(track.score), 'currently_tracking': currently_tracking})
+        boxes = []
+        for track in tracks:
+            currently_tracking = (self.tracking_object is not None and track.track_id == self.tracking_object.track_id)
+            boxes.append({'x1': track.tlbr[0], 'y1': track.tlbr[1], 'x2': track.tlbr[2], 'y2': track.tlbr[3], 'id': track.track_id, 'confidence': str(track.score), 'currently_tracking': currently_tracking})
 
-            self.ws_callback({"boxes": boxes})
+        self.ws_callback({"boxes": boxes})
 
     def update_tracking_object(self, tracks):
         ''' 

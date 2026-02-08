@@ -35,8 +35,7 @@ class Websocket_handler():
             "get-tracking-status": self.handle_get_tracking_status,
             "manual-control": self.handle_manual_control,
             "autofocus": self.handle_autofocus,
-            "toggle-auto-acquire": self.handle_auto_acquire,
-            "show-boxes": self.handle_show_boxes
+            "toggle-auto-acquire": self.handle_auto_acquire
         }
 
     async def handle_box_draw(self, data, websocket):
@@ -78,10 +77,6 @@ class Websocket_handler():
         self.tracker.user_intent.auto_acquire = not self.tracker.user_intent.auto_acquire
         print(f"auto acquire set to {self.tracker.user_intent.auto_acquire}")
         self.tracker.emit_tracking_state(force=True)
-
-    async def handle_show_boxes(self, data, websocket):
-        self.tracker.show_boxes = not self.tracker.show_boxes
-        print(f"show boxes set to {self.tracker.show_boxes}")
 
     def read_voltage(self) -> float:
         val = bus.read_word_data(ADDR, VOLTAGE_REG)
