@@ -39,7 +39,7 @@ class PersonTracking:
         self.state_changed_at = time.time()
         self.last_emitted_state = None
         self.last_emitted_seq = -1
-        self.hailo = Hailo('hailo_models/aquatic_alphaV2.hef')
+        self.hailo = Hailo('hailo_models/barometric_beta.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
         threading.Thread(target = self.tracking_servo, daemon=True).start()
