@@ -67,7 +67,7 @@ class Websocket_handler():
         await websocket.send(json.dumps({"type": "tracking-state", "payload": status}))
 
     async def handle_manual_control(self, data, websocket):
-        self.tracker.manual_control(data['direction'])
+        self.tracker.manual_control(data['direction'], data['analog'])
 
     async def handle_autofocus(self, data, websocket):
         self.camera.picam2.autofocus_cycle(wait = False)
