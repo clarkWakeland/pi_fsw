@@ -16,11 +16,31 @@ class MotorControl:
         self.ws_callback = ws_callback
         self.HIGH_CLAMP_CONTROL = 3
         self.LOW_CLAMP_CONTROL = -3
+        self.last_limit_event_time = 0.0
+        self.limit_event_cooldown_s = 1.0
 
         # init angles
         pantilthat.pan(0)
         pantilthat.tilt(0)
         print('servo initialized')
+
+    def emit_servo_limit(self, axis, requested_angle, min_angle, max_angle):
+        now = time.time()
+        if now - self.last_limit_event_time < self.limit_event_cooldown_s:
+            return
+
+        self.last_limit_event_time = now
+        if self.ws_callback is None:
+            return
+
+        self.ws_callback({
+            "servo_at_max_angle": {
+                "axis": axis,
+                "requested_angle": float(requested_angle),
+                "min_angle": float(min_angle),
+                "max_angle": float(max_angle),
+            }
+        })
 
     def calc_derivative(self, delta, last_delta, last_time):
         current_time = time.time()
@@ -48,6 +68,7 @@ class MotorControl:
             new_angle = pantilthat.get_pan() + control_output
             if abs(new_angle) > 90 :
                 print('servo at max angle')
+                self.emit_servo_limit("x", new_angle, -90, 90)
                 return
             
             pantilthat.pan(new_angle)
@@ -65,10 +86,10 @@ class MotorControl:
             new_angle = pantilthat.get_tilt() + control_output
             if new_angle > 90 or new_angle < -5:
                 print('servo at max angle')
+                self.emit_servo_limit("y", new_angle, -5, 90)
                 return
             
             pantilthat.tilt(new_angle)
 
     def clamp_control(self, angle):
         return max(self.LOW_CLAMP_CONTROL, min(self.HIGH_CLAMP_CONTROL, angle))
-

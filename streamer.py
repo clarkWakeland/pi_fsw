@@ -25,7 +25,8 @@ class Websocket_handler():
         self.tracker = person_tracking_instance
         self.camera = camera_instance
         self.runML_pi = False
-        self.websocket = None
+        self.websockets = set()
+        self.loop = None
 
         self.message_handlers = {
             "box-drawn": self.handle_box_draw,
@@ -34,8 +35,7 @@ class Websocket_handler():
             "get-tracking-status": self.handle_get_tracking_status,
             "manual-control": self.handle_manual_control,
             "autofocus": self.handle_autofocus,
-            "toggle-auto-acquire": self.handle_auto_acquire,
-            "show-boxes": self.handle_show_boxes
+            "toggle-auto-acquire": self.handle_auto_acquire
         }
 
     async def handle_box_draw(self, data, websocket):
@@ -54,14 +54,20 @@ class Websocket_handler():
         self.tracker.user_intent.clear_ROI()
 
     async def handle_toggle_tracking(self, data, websocket):
-        self.tracker.user_intent.set_ML()
-        await websocket.send(json.dumps({"tracking_primed": self.tracker.user_intent.runML}))
+        run_ml = self.tracker.toggle_tracking()
+        await websocket.send(json.dumps({"tracking_primed": run_ml}))
+        await websocket.send(json.dumps({
+            "type": "tracking-state",
+            "payload": self.tracker.get_tracking_status()
+        }))
 
     async def handle_get_tracking_status(self, data, websocket):
-        await websocket.send(json.dumps({"tracking_primed": self.tracker.user_intent.runML}))
+        status = self.tracker.get_tracking_status()
+        await websocket.send(json.dumps({"tracking_primed": status["run_ml"]}))
+        await websocket.send(json.dumps({"type": "tracking-state", "payload": status}))
 
     async def handle_manual_control(self, data, websocket):
-        self.tracker.manual_control(data['direction'])
+        self.tracker.manual_control(data['direction'], data['analog'])
 
     async def handle_autofocus(self, data, websocket):
         self.camera.picam2.autofocus_cycle(wait = False)
@@ -70,10 +76,7 @@ class Websocket_handler():
     async def handle_auto_acquire(self, data, websocket):
         self.tracker.user_intent.auto_acquire = not self.tracker.user_intent.auto_acquire
         print(f"auto acquire set to {self.tracker.user_intent.auto_acquire}")
-
-    async def handle_show_boxes(self, data, websocket):
-        self.tracker.show_boxes = not self.tracker.show_boxes
-        print(f"show boxes set to {self.tracker.show_boxes}")
+        self.tracker.emit_tracking_state(force=True)
 
     def read_voltage(self) -> float:
         val = bus.read_word_data(ADDR, VOLTAGE_REG)
@@ -95,6 +98,7 @@ class Websocket_handler():
 
     async def main(self):
         try:
+            self.loop = asyncio.get_running_loop()
             async with websockets.serve(self.handle, "0.0.0.0", port=5000):
                 print("websocket server started on port 5000")
                 battery_task = asyncio.create_task(self.poll_battery())                    
@@ -102,16 +106,43 @@ class Websocket_handler():
         finally:
             battery_task.cancel()
 
+    async def broadcast(self, message):
+        if not self.websockets:
+            return
+
+        data = json.dumps(message)
+        disconnected = []
+        for ws in list(self.websockets):
+            try:
+                await ws.send(data)
+            except Exception:
+                disconnected.append(ws)
+
+        for ws in disconnected:
+            self.websockets.discard(ws)
+
+    def send_from_thread(self, message):
+        if self.loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self.broadcast(message), self.loop)
+
     async def handle(self, websocket):
-        self.websocket = websocket # bit of spaghetti to allow the callback
-        async for message in websocket:
-            message_dict = json.loads(message)
-            msg_type = message_dict.get("type")
-            func  = self.message_handlers.get(msg_type)
-            if func:
-                await func(message_dict, websocket)
-            else:
-                print(f"Unknown message type: {msg_type}")
+        self.websockets.add(websocket)
+        try:
+            await websocket.send(json.dumps({
+                "type": "tracking-state",
+                "payload": self.tracker.get_tracking_status()
+            }))
+            async for message in websocket:
+                message_dict = json.loads(message)
+                msg_type = message_dict.get("type")
+                func  = self.message_handlers.get(msg_type)
+                if func:
+                    await func(message_dict, websocket)
+                else:
+                    print(f"Unknown message type: {msg_type}")
+        finally:
+            self.websockets.discard(websocket)
 
 class CameraStreamer:
     def __init__(self):
@@ -139,12 +170,10 @@ class CameraStreamer:
         return self.picam2.capture_array()
 
 def send_ws_message(message):
-    if wsHandler.websocket: 
-        asyncio.run_coroutine_threadsafe(
-            wsHandler.websocket.send(json.dumps(message)),
-            wsHandler.websocket.loop
-        )
-        print(message)
+    if "wsHandler" not in globals():
+        return
+    wsHandler.send_from_thread(message)
+    print(message)
 
 camera = CameraStreamer()
 pTrack = PersonTracking(send_ws_message, camera)
