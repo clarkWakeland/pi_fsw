@@ -314,16 +314,9 @@ class PersonTracking:
         y = max(-1.0, min(1.0, y))
         magnitude = max(0.0, min(1.0, magnitude))
 
-        movement_scale = 75.0
-        x_movement = -x * movement_scale
-        y_movement = -y * movement_scale
         logger.info(
-            "Manual analog control source=%s x=%.3f y=%.3f magnitude=%.3f x_move=%.2f y_move=%.2f",
-            source, x, y, magnitude, x_movement, y_movement
+            "Manual analog control source=%s x=%.3f y=%.3f magnitude=%.3f",
+            source, x, y, magnitude
         )
 
-        # Ignore near-zero values so small stick jitter does not move servos.
-        if abs(y_movement) > 0.5:
-            self.mc.set_angle('y', y_movement)
-        if abs(x_movement) > 0.5:
-            self.mc.set_angle('x', x_movement)
+        self.mc.set_manual_input(x, y)
