@@ -67,7 +67,28 @@ class Websocket_handler():
         await websocket.send(json.dumps({"type": "tracking-state", "payload": status}))
 
     async def handle_manual_control(self, data, websocket):
-        self.tracker.manual_control(data['direction'], data['analog'])
+        analog = data.get('analog', {})
+        if not isinstance(analog, dict):
+            analog = {}
+
+        if "x" not in analog or "y" not in analog:
+            direction = data.get('direction')
+            magnitude = float(analog.get('magnitude', 1.0 if direction else 0.0))
+            legacy_axes = {
+                "UP": (0.0, -magnitude),
+                "DOWN": (0.0, magnitude),
+                "LEFT": (-magnitude, 0.0),
+                "RIGHT": (magnitude, 0.0),
+            }
+            legacy_x, legacy_y = legacy_axes.get(direction, (0.0, 0.0))
+            analog = {
+                "x": legacy_x,
+                "y": legacy_y,
+                "magnitude": min(1.0, (legacy_x ** 2 + legacy_y ** 2) ** 0.5),
+                "source": "legacy-direction",
+            }
+
+        self.tracker.manual_control(analog)
 
     async def handle_autofocus(self, data, websocket):
         self.camera.picam2.autofocus_cycle(wait = False)
