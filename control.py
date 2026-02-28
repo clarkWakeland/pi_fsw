@@ -300,20 +300,23 @@ class PersonTracking:
 
             time.sleep(0.033)
 
-    def manual_control(self, message_direction, analog):
+    def manual_control(self, analog):
         if self.user_intent.runML:
             logger.info("Manual control is disabled while tracking is on.")
             return
-        
-        mag = analog['magnitude']
-        movement = mag * 75
-        logger.info(f"Manual control: {message_direction}, magnitude: {mag}, analog: {analog}")
-        match message_direction:
-            case "UP":
-                self.mc.set_angle('y', movement)
-            case "DOWN":
-                self.mc.set_angle('y', -movement)
-            case "LEFT":
-                self.mc.set_angle('x', movement)
-            case "RIGHT":
-                self.mc.set_angle('x', -movement)
+
+        x = float(analog.get('x', 0.0))
+        y = float(analog.get('y', 0.0))
+        magnitude = float(analog.get('magnitude', min(1.0, np.hypot(x, y))))
+        source = analog.get('source', 'unknown')
+
+        x = max(-1.0, min(1.0, x))
+        y = max(-1.0, min(1.0, y))
+        magnitude = max(0.0, min(1.0, magnitude))
+
+        logger.info(
+            "Manual analog control source=%s x=%.3f y=%.3f magnitude=%.3f",
+            source, x, y, magnitude
+        )
+
+        self.mc.set_manual_input(x, y)

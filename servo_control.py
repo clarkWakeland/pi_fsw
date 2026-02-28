@@ -18,6 +18,16 @@ class MotorControl:
         self.LOW_CLAMP_CONTROL = -3
         self.last_limit_event_time = 0.0
         self.limit_event_cooldown_s = 1.0
+        self.X_MIN_ANGLE = -90
+        self.X_MAX_ANGLE = 90
+        self.Y_MIN_ANGLE = -5
+        self.Y_MAX_ANGLE = 90
+
+        # Manual-control tuning: deadzone + guaranteed breakaway step to overcome stiction.
+        self.MANUAL_DEADZONE = 0.08
+        self.MANUAL_BREAKAWAY_STEP = 0.7
+        self.MANUAL_MAX_STEP = 2.5
+        self.MANUAL_EXPO = 1.4
 
         # init angles
         pantilthat.pan(0)
@@ -42,54 +52,79 @@ class MotorControl:
             }
         })
 
-    def calc_derivative(self, delta, last_delta, last_time):
-        current_time = time.time()
-        time_diff = current_time - last_time
-
-        if time_diff > 0:
-            d = (delta - last_delta) / time_diff 
-            d = d * self.DERIVATIVE_GAIN
-            return d
-        else:
+    def calc_derivative(self, delta, last_delta, time_diff):
+        if time_diff <= 0:
             return 0
+        d = (delta - last_delta) / time_diff
+        return d * self.DERIVATIVE_GAIN
+
+    def _apply_axis_step(self, axis, step):
+        axis = axis.lower()
+        if axis == "x":
+            current_angle = pantilthat.get_pan()
+            requested_angle = current_angle + step
+            if requested_angle < self.X_MIN_ANGLE or requested_angle > self.X_MAX_ANGLE:
+                print('servo at max angle')
+                self.emit_servo_limit("x", requested_angle, self.X_MIN_ANGLE, self.X_MAX_ANGLE)
+                return
+            pantilthat.pan(requested_angle)
+            return
+
+        if axis == "y":
+            current_angle = pantilthat.get_tilt()
+            requested_angle = current_angle + step
+            if requested_angle < self.Y_MIN_ANGLE or requested_angle > self.Y_MAX_ANGLE:
+                print('servo at max angle')
+                self.emit_servo_limit("y", requested_angle, self.Y_MIN_ANGLE, self.Y_MAX_ANGLE)
+                return
+            pantilthat.tilt(requested_angle)
+            return
         
     def set_angle(self, axis, delta):
+        axis = axis.lower()
+        now = time.time()
 
-        if axis.lower() == "x":
+        if axis == "x":
+            time_diff = now - self.last_x_time
+            p = delta * self.PROPORTIONAL_GAIN
+            d = self.calc_derivative(delta, self.last_x_delta, time_diff)
+            control_output = self.clamp_control(p + d)
+            self._apply_axis_step("x", control_output)
             self.last_x_delta = delta
+            self.last_x_time = now
+            return
 
-            # proportional term
+        if axis == "y":
+            time_diff = now - self.last_y_time
             p = delta * self.PROPORTIONAL_GAIN
-
-            # calculate derivative term
-            d = self.calc_derivative(delta, self.last_x_delta, self.last_x_time)
-
+            d = self.calc_derivative(delta, self.last_y_delta, time_diff)
             control_output = self.clamp_control(p + d)
-            new_angle = pantilthat.get_pan() + control_output
-            if abs(new_angle) > 90 :
-                print('servo at max angle')
-                self.emit_servo_limit("x", new_angle, -90, 90)
-                return
-            
-            pantilthat.pan(new_angle)
-            
-        elif axis.lower() == "y":
+            self._apply_axis_step("y", control_output)
             self.last_y_delta = delta
-            
-            # proportional term
-            p = delta * self.PROPORTIONAL_GAIN
+            self.last_y_time = now
+            return
 
-            # calculate derivative term
-            d = self.calc_derivative(delta, self.last_y_delta, self.last_y_time)
-            
-            control_output = self.clamp_control(p + d)
-            new_angle = pantilthat.get_tilt() + control_output
-            if new_angle > 90 or new_angle < -5:
-                print('servo at max angle')
-                self.emit_servo_limit("y", new_angle, -5, 90)
-                return
-            
-            pantilthat.tilt(new_angle)
+    def _manual_axis_to_step(self, axis_value):
+        magnitude = abs(axis_value)
+        if magnitude < self.MANUAL_DEADZONE:
+            return 0.0
+
+        normalized = (magnitude - self.MANUAL_DEADZONE) / max(1e-6, (1.0 - self.MANUAL_DEADZONE))
+        curved = normalized ** self.MANUAL_EXPO
+        step = self.MANUAL_BREAKAWAY_STEP + curved * (self.MANUAL_MAX_STEP - self.MANUAL_BREAKAWAY_STEP)
+        return float(np.copysign(step, axis_value))
+
+    def set_manual_input(self, x_input, y_input):
+        x_input = max(-1.0, min(1.0, float(x_input)))
+        y_input = max(-1.0, min(1.0, float(y_input)))
+
+        x_step = self._manual_axis_to_step(-x_input)
+        y_step = self._manual_axis_to_step(-y_input)
+
+        if y_step != 0.0:
+            self._apply_axis_step("y", y_step)
+        if x_step != 0.0:
+            self._apply_axis_step("x", x_step)
 
     def clamp_control(self, angle):
         return max(self.LOW_CLAMP_CONTROL, min(self.HIGH_CLAMP_CONTROL, angle))
