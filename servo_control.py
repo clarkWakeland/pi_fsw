@@ -23,15 +23,20 @@ class MotorControl:
         self.Y_MIN_ANGLE = -5
         self.Y_MAX_ANGLE = 90
 
-        # Manual-control tuning: deadzone + guaranteed breakaway step to overcome stiction.
+        # Manual-control tuning with a dedicated precision band for small stick inputs.
         self.MANUAL_DEADZONE = 0.08
-        self.MANUAL_BREAKAWAY_STEP = 0.7
+        self.MANUAL_PRECISION_BAND_MAX = 0.5
+        # Keep low-band outputs above common stiction while preserving fine response.
+        self.MANUAL_LOW_BAND_MAX_STEP = 0.9
+        self.MANUAL_LOW_BAND_EXPO = 1.4
+        self.MANUAL_HIGH_BAND_EXPO = 1.25
         self.MANUAL_MAX_STEP = 2.5
-        self.MANUAL_EXPO = 1.4
 
         # init angles
         pantilthat.pan(0)
         pantilthat.tilt(0)
+        self.virtual_pan_angle = 0.0
+        self.virtual_tilt_angle = 0.0
         print('servo initialized')
 
     def emit_servo_limit(self, axis, requested_angle, min_angle, max_angle):
@@ -61,22 +66,24 @@ class MotorControl:
     def _apply_axis_step(self, axis, step):
         axis = axis.lower()
         if axis == "x":
-            current_angle = pantilthat.get_pan()
+            current_angle = self.virtual_pan_angle
             requested_angle = current_angle + step
             if requested_angle < self.X_MIN_ANGLE or requested_angle > self.X_MAX_ANGLE:
                 print('servo at max angle')
                 self.emit_servo_limit("x", requested_angle, self.X_MIN_ANGLE, self.X_MAX_ANGLE)
                 return
+            self.virtual_pan_angle = float(requested_angle)
             pantilthat.pan(requested_angle)
             return
 
         if axis == "y":
-            current_angle = pantilthat.get_tilt()
+            current_angle = self.virtual_tilt_angle
             requested_angle = current_angle + step
             if requested_angle < self.Y_MIN_ANGLE or requested_angle > self.Y_MAX_ANGLE:
                 print('servo at max angle')
                 self.emit_servo_limit("y", requested_angle, self.Y_MIN_ANGLE, self.Y_MAX_ANGLE)
                 return
+            self.virtual_tilt_angle = float(requested_angle)
             pantilthat.tilt(requested_angle)
             return
         
@@ -109,9 +116,17 @@ class MotorControl:
         if magnitude < self.MANUAL_DEADZONE:
             return 0.0
 
-        normalized = (magnitude - self.MANUAL_DEADZONE) / max(1e-6, (1.0 - self.MANUAL_DEADZONE))
-        curved = normalized ** self.MANUAL_EXPO
-        step = self.MANUAL_BREAKAWAY_STEP + curved * (self.MANUAL_MAX_STEP - self.MANUAL_BREAKAWAY_STEP)
+        if magnitude < self.MANUAL_PRECISION_BAND_MAX:
+            low_band_span = max(1e-6, self.MANUAL_PRECISION_BAND_MAX - self.MANUAL_DEADZONE)
+            normalized = (magnitude - self.MANUAL_DEADZONE) / low_band_span
+            curved = normalized ** self.MANUAL_LOW_BAND_EXPO
+            step = curved * self.MANUAL_LOW_BAND_MAX_STEP
+        else:
+            high_band_span = max(1e-6, 1.0 - self.MANUAL_PRECISION_BAND_MAX)
+            normalized = (magnitude - self.MANUAL_PRECISION_BAND_MAX) / high_band_span
+            curved = normalized ** self.MANUAL_HIGH_BAND_EXPO
+            step = self.MANUAL_LOW_BAND_MAX_STEP + curved * (self.MANUAL_MAX_STEP - self.MANUAL_LOW_BAND_MAX_STEP)
+
         return float(np.copysign(step, axis_value))
 
     def set_manual_input(self, x_input, y_input):
