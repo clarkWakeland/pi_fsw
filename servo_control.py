@@ -26,8 +26,9 @@ class MotorControl:
         # Manual-control tuning with a dedicated precision band for small stick inputs.
         self.MANUAL_DEADZONE = 0.08
         self.MANUAL_PRECISION_BAND_MAX = 0.5
-        self.MANUAL_LOW_BAND_MAX_STEP = 0.45
-        self.MANUAL_LOW_BAND_EXPO = 1.8
+        # Keep low-band outputs above common stiction while preserving fine response.
+        self.MANUAL_LOW_BAND_MAX_STEP = 0.9
+        self.MANUAL_LOW_BAND_EXPO = 1.4
         self.MANUAL_HIGH_BAND_EXPO = 1.25
         self.MANUAL_MAX_STEP = 2.5
 
