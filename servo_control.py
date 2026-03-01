@@ -35,6 +35,8 @@ class MotorControl:
         # init angles
         pantilthat.pan(0)
         pantilthat.tilt(0)
+        self.virtual_pan_angle = 0.0
+        self.virtual_tilt_angle = 0.0
         print('servo initialized')
 
     def emit_servo_limit(self, axis, requested_angle, min_angle, max_angle):
@@ -64,22 +66,24 @@ class MotorControl:
     def _apply_axis_step(self, axis, step):
         axis = axis.lower()
         if axis == "x":
-            current_angle = pantilthat.get_pan()
+            current_angle = self.virtual_pan_angle
             requested_angle = current_angle + step
             if requested_angle < self.X_MIN_ANGLE or requested_angle > self.X_MAX_ANGLE:
                 print('servo at max angle')
                 self.emit_servo_limit("x", requested_angle, self.X_MIN_ANGLE, self.X_MAX_ANGLE)
                 return
+            self.virtual_pan_angle = float(requested_angle)
             pantilthat.pan(requested_angle)
             return
 
         if axis == "y":
-            current_angle = pantilthat.get_tilt()
+            current_angle = self.virtual_tilt_angle
             requested_angle = current_angle + step
             if requested_angle < self.Y_MIN_ANGLE or requested_angle > self.Y_MAX_ANGLE:
                 print('servo at max angle')
                 self.emit_servo_limit("y", requested_angle, self.Y_MIN_ANGLE, self.Y_MAX_ANGLE)
                 return
+            self.virtual_tilt_angle = float(requested_angle)
             pantilthat.tilt(requested_angle)
             return
         
