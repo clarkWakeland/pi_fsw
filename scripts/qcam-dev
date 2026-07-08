@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+host="${QCAM_HOST:-qcam1}"
+dev_target="${QCAM_DEV_TARGET:-/opt/releases/pi_fsw-dev}"
+previous_file="${QCAM_PREVIOUS_FILE:-/opt/fsw.previous}"
+streamer_service="${QCAM_STREAMER_SERVICE:-streamer.service}"
+updater_service="${QCAM_UPDATER_SERVICE:-updater.service}"
+full_sync=0
+restart_updater="${QCAM_RESTART_UPDATER:-0}"
+follow_logs=0
+command=""
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  scripts/qcam-dev [options] deploy
+  scripts/qcam-dev [options] revert
+  scripts/qcam-dev [options] status
+  scripts/qcam-dev [options] logs
+
+Commands:
+  deploy   Sync this repo to /opt/releases/pi_fsw-dev, mark it 0.0.0-dev,
+           switch /opt/fsw to it, and restart streamer.service.
+  revert   Switch /opt/fsw back to the release saved before deploy.
+  status   Show the active /opt/fsw target, saved previous target, service state,
+           and active device_version.json.
+  logs     Show recent streamer.service logs. Use --follow to stream logs.
+
+Options:
+  --host HOST          SSH host alias to use. Default: qcam1.
+  --target PATH       Remote dev release path. Default: /opt/releases/pi_fsw-dev.
+  --full              Include model directories even if they already exist remotely.
+  --restart-updater   Restart updater.service too, so /version immediately reports
+                      the 0.0.0-dev marker.
+  --follow            Follow logs for the logs command.
+  -h, --help          Show this help.
+
+Environment overrides:
+  QCAM_HOST, QCAM_DEV_TARGET, QCAM_PREVIOUS_FILE, QCAM_STREAMER_SERVICE,
+  QCAM_UPDATER_SERVICE, QCAM_RESTART_UPDATER
+USAGE
+}
+
+die() {
+    echo "qcam-dev: $*" >&2
+    exit 1
+}
+
+quote() {
+    printf '%q' "$1"
+}
+
+remote() {
+    ssh "$host" "$1"
+}
+
+require_local_tools() {
+    command -v rsync >/dev/null || die "rsync is required"
+    command -v ssh >/dev/null || die "ssh is required"
+}
+
+require_remote_sudo() {
+    remote "sudo -n true" >/dev/null || die "passwordless sudo is required on $host"
+}
+
+git_value() {
+    git -C "$repo_root" "$@" 2>/dev/null || true
+}
+
+local_git_sha() {
+    local sha
+    sha="$(git_value rev-parse --short HEAD)"
+    [[ -n "$sha" ]] && echo "$sha" || echo "unknown"
+}
+
+local_git_branch() {
+    local branch
+    branch="$(git_value branch --show-current)"
+    [[ -n "$branch" ]] && echo "$branch" || echo "unknown"
+}
+
+local_git_dirty() {
+    if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "unknown"
+        return
+    fi
+
+    if git -C "$repo_root" diff --quiet && git -C "$repo_root" diff --cached --quiet; then
+        echo "false"
+    else
+        echo "true"
+    fi
+}
+
+models_exist_remotely() {
+    remote "test -f $(quote "$dev_target")/hailo_models/barometric_beta.hef && test -f $(quote "$dev_target")/yolo_models/best_train6.pt" >/dev/null 2>&1
+}
+
+write_dev_version_marker() {
+    local sha branch dirty deployed_at
+    sha="$(local_git_sha)"
+    branch="$(local_git_branch)"
+    dirty="$(local_git_dirty)"
+    deployed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    ssh "$host" \
+        "sudo env DEV_TARGET=$(quote "$dev_target") DEV_SHA=$(quote "$sha") DEV_BRANCH=$(quote "$branch") DEV_DIRTY=$(quote "$dirty") DEV_DEPLOYED_AT=$(quote "$deployed_at") python3 -" <<'PY'
+import json
+import os
+from pathlib import Path
+
+target = Path(os.environ["DEV_TARGET"])
+version_path = target / "device_version.json"
+
+try:
+    data = json.loads(version_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    data = {}
+
+base_version = (
+    data.get("base_version_number")
+    or data.get("version_number")
+    or data.get("version")
+    or "unknown"
+)
+
+data["version_number"] = "0.0.0-dev"
+data["base_version_number"] = base_version
+data["dev_version_notice"] = "DEVELOPMENT BUILD - run scripts/qcam-dev revert to return to the previous release."
+data["dev_build"] = {
+    "git_sha": os.environ["DEV_SHA"],
+    "git_branch": os.environ["DEV_BRANCH"],
+    "git_dirty": os.environ["DEV_DIRTY"] == "true",
+    "deployed_at": os.environ["DEV_DEPLOYED_AT"],
+}
+
+tmp_path = version_path.with_name(f"{version_path.name}.tmp")
+tmp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+tmp_path.replace(version_path)
+PY
+}
+
+restart_services() {
+    remote "sudo systemctl restart $(quote "$streamer_service")"
+    if [[ "$restart_updater" == "1" ]]; then
+        remote "sudo systemctl restart $(quote "$updater_service")"
+    fi
+}
+
+deploy() {
+    require_local_tools
+    require_remote_sudo
+
+    local current_target
+    current_target="$(remote "readlink -f /opt/fsw 2>/dev/null || true")"
+
+    if [[ -n "$current_target" && "$current_target" != "$dev_target" ]]; then
+        printf '%s\n' "$current_target" | ssh "$host" "sudo tee $(quote "$previous_file") >/dev/null"
+    fi
+
+    remote "sudo mkdir -p $(quote "$dev_target")"
+
+    local -a excludes=(
+        --exclude .git
+        --exclude __pycache__
+        --exclude '*.pyc'
+    )
+
+    if [[ "$full_sync" != "1" ]] && models_exist_remotely; then
+        excludes+=(--exclude hailo_models/ --exclude yolo_models/)
+    fi
+
+    rsync -az --delete \
+        --rsync-path="sudo rsync" \
+        "${excludes[@]}" \
+        "$repo_root/" \
+        "$host:$dev_target/"
+
+    write_dev_version_marker
+
+    remote "sudo ln -sfn $(quote "$dev_target") /opt/fsw"
+    restart_services
+    status
+}
+
+revert() {
+    require_remote_sudo
+
+    local previous_target
+    previous_target="$(remote "sudo cat $(quote "$previous_file") 2>/dev/null || true")"
+    [[ -n "$previous_target" ]] || die "no previous release recorded at $previous_file"
+
+    remote "test -d $(quote "$previous_target")" >/dev/null || die "recorded previous release does not exist: $previous_target"
+    remote "sudo ln -sfn $(quote "$previous_target") /opt/fsw"
+    restart_services
+    status
+}
+
+status() {
+    remote "set -e
+echo Host: $(quote "$host")
+echo Active target: \$(readlink -f /opt/fsw 2>/dev/null || echo missing)
+echo Saved previous: \$(sudo cat $(quote "$previous_file") 2>/dev/null || echo none)
+echo Streamer service: \$(systemctl is-active $(quote "$streamer_service") 2>/dev/null || true)
+echo Updater service: \$(systemctl is-active $(quote "$updater_service") 2>/dev/null || true)
+echo
+if [ -f /opt/fsw/device_version.json ]; then
+    cat /opt/fsw/device_version.json
+else
+    echo /opt/fsw/device_version.json missing
+fi"
+}
+
+logs() {
+    if [[ "$follow_logs" == "1" ]]; then
+        remote "journalctl -u $(quote "$streamer_service") -f --no-pager"
+    else
+        remote "journalctl -u $(quote "$streamer_service") -n 120 --no-pager"
+    fi
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        deploy|revert|status|logs)
+            [[ -z "$command" ]] || die "only one command can be supplied"
+            command="$1"
+            shift
+            ;;
+        --host)
+            [[ $# -ge 2 ]] || die "--host requires a value"
+            host="$2"
+            shift 2
+            ;;
+        --target)
+            [[ $# -ge 2 ]] || die "--target requires a value"
+            dev_target="$2"
+            shift 2
+            ;;
+        --full)
+            full_sync=1
+            shift
+            ;;
+        --restart-updater)
+            restart_updater=1
+            shift
+            ;;
+        --follow)
+            follow_logs=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown argument: $1"
+            ;;
+    esac
+done
+
+[[ -n "$command" ]] || {
+    usage
+    exit 1
+}
+
+case "$command" in
+    deploy) deploy ;;
+    revert) revert ;;
+    status) status ;;
+    logs) logs ;;
+esac

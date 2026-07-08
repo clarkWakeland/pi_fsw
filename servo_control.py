@@ -1,6 +1,9 @@
 import time
 import pantilthat
 import numpy as np
+from runtime_utils import limit_step_acceleration
+
+
 class MotorControl:
    
     def __init__(self, ws_callback=None):
@@ -13,6 +16,10 @@ class MotorControl:
         self.last_y_delta = 0
         self.last_x_time = time.time()
         self.last_y_time = time.time()
+        self.last_x_step = 0.0
+        self.last_y_step = 0.0
+        self.last_manual_x_step = 0.0
+        self.last_manual_y_step = 0.0
         self.ws_callback = ws_callback
         self.HIGH_CLAMP_CONTROL = 3
         self.LOW_CLAMP_CONTROL = -3
@@ -27,10 +34,10 @@ class MotorControl:
         self.MANUAL_DEADZONE = 0.08
         self.MANUAL_PRECISION_BAND_MAX = 0.5
         # Keep low-band outputs above common stiction while preserving fine response.
-        self.MANUAL_LOW_BAND_MAX_STEP = 0.9
+        self.MANUAL_LOW_BAND_MAX_STEP = 0.55
         self.MANUAL_LOW_BAND_EXPO = 1.4
         self.MANUAL_HIGH_BAND_EXPO = 1.25
-        self.MANUAL_MAX_STEP = 2.5
+        self.MANUAL_MAX_STEP = 1.6
 
         # init angles
         pantilthat.pan(0)
@@ -38,6 +45,14 @@ class MotorControl:
         self.virtual_pan_angle = 0.0
         self.virtual_tilt_angle = 0.0
         print('servo initialized')
+
+    def reset_tracking_steps(self):
+        self.last_x_step = 0.0
+        self.last_y_step = 0.0
+
+    def reset_manual_steps(self):
+        self.last_manual_x_step = 0.0
+        self.last_manual_y_step = 0.0
 
     def emit_servo_limit(self, axis, requested_angle, min_angle, max_angle):
         now = time.time()
@@ -87,7 +102,7 @@ class MotorControl:
             pantilthat.tilt(requested_angle)
             return
         
-    def set_angle(self, axis, delta):
+    def set_angle(self, axis, delta, max_step=None, max_step_change=None):
         axis = axis.lower()
         now = time.time()
 
@@ -95,8 +110,11 @@ class MotorControl:
             time_diff = now - self.last_x_time
             p = delta * self.PROPORTIONAL_GAIN
             d = self.calc_derivative(delta, self.last_x_delta, time_diff)
-            control_output = self.clamp_control(p + d)
+            control_output = self.clamp_control(p + d, max_step=max_step)
+            if max_step_change is not None:
+                control_output = limit_step_acceleration(control_output, self.last_x_step, max_step_change)
             self._apply_axis_step("x", control_output)
+            self.last_x_step = control_output
             self.last_x_delta = delta
             self.last_x_time = now
             return
@@ -105,8 +123,11 @@ class MotorControl:
             time_diff = now - self.last_y_time
             p = delta * self.PROPORTIONAL_GAIN
             d = self.calc_derivative(delta, self.last_y_delta, time_diff)
-            control_output = self.clamp_control(p + d)
+            control_output = self.clamp_control(p + d, max_step=max_step)
+            if max_step_change is not None:
+                control_output = limit_step_acceleration(control_output, self.last_y_step, max_step_change)
             self._apply_axis_step("y", control_output)
+            self.last_y_step = control_output
             self.last_y_delta = delta
             self.last_y_time = now
             return
@@ -129,17 +150,30 @@ class MotorControl:
 
         return float(np.copysign(step, axis_value))
 
-    def set_manual_input(self, x_input, y_input):
+    def set_manual_input(self, x_input, y_input, max_step_change=None):
         x_input = max(-1.0, min(1.0, float(x_input)))
         y_input = max(-1.0, min(1.0, float(y_input)))
 
         x_step = self._manual_axis_to_step(-x_input)
         y_step = self._manual_axis_to_step(-y_input)
 
+        if max_step_change is not None:
+            x_step = limit_step_acceleration(x_step, self.last_manual_x_step, max_step_change)
+            y_step = limit_step_acceleration(y_step, self.last_manual_y_step, max_step_change)
+
         if y_step != 0.0:
             self._apply_axis_step("y", y_step)
         if x_step != 0.0:
             self._apply_axis_step("x", x_step)
 
-    def clamp_control(self, angle):
-        return max(self.LOW_CLAMP_CONTROL, min(self.HIGH_CLAMP_CONTROL, angle))
+        self.last_manual_x_step = x_step
+        self.last_manual_y_step = y_step
+
+    def clamp_control(self, angle, max_step=None):
+        low = self.LOW_CLAMP_CONTROL
+        high = self.HIGH_CLAMP_CONTROL
+        if max_step is not None:
+            max_step = abs(float(max_step))
+            low = max(low, -max_step)
+            high = min(high, max_step)
+        return max(low, min(high, angle))
