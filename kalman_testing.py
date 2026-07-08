@@ -1,12 +1,9 @@
-import torch
-from yolox.data.data_augment import ValTransform
-from yolox.exp import get_exp
-from yolox.utils import postprocess
-from yolox.tracker.byte_tracker import BYTETracker, STrack
 import argparse
 import cv2
 import time
 import numpy as np
+import torch
+from pathlib import Path
 
 # hailo = Hailo('detr_resnet50_v1_18_bn.hef')
 # hailo = Hailo('hailo_models/best_train6.hef')
@@ -18,6 +15,39 @@ YOLOX_NMS = 0.6
 YOLOX_FP16 = False
 YOLOX_LEGACY = False
 YOLOX_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEFAULT_VIDEO_PATH = "/home/clark/Videos/Screencasts"
+VIDEO_EXTENSIONS = {".avi", ".mkv", ".mov", ".mp4", ".webm"}
+
+
+def resolve_video_path(video_path):
+    path = Path(video_path).expanduser()
+    if path.is_dir():
+        videos = [
+            candidate
+            for candidate in path.iterdir()
+            if candidate.is_file() and candidate.suffix.lower() in VIDEO_EXTENSIONS
+        ]
+        if not videos:
+            raise FileNotFoundError(f"No video files found in {path}")
+        return str(max(videos, key=lambda candidate: candidate.stat().st_mtime))
+    if not path.is_file():
+        raise FileNotFoundError(f"Video path does not exist: {path}")
+    return str(path)
+
+
+parser = argparse.ArgumentParser("basic args")
+parser.add_argument("--video", default=DEFAULT_VIDEO_PATH, help="video file or directory to visualize")
+parser.add_argument("--track_thresh", type=float, default=0.35, help="tracking confidence threshold")
+parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
+parser.add_argument("--match_thresh", type=float, default=0.80, help="matching threshold for tracking")
+parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
+parser.add_argument("--mot20", dest="mot20", default=True, action="store_true", help="test mot20.")
+args = parser.parse_args()
+
+from yolox.data.data_augment import ValTransform
+from yolox.exp import get_exp
+from yolox.utils import postprocess
+from yolox.tracker.byte_tracker import BYTETracker, STrack
 
 
 def load_yolox_model():
@@ -43,16 +73,14 @@ yolox_model, yolox_exp, yolox_preproc = load_yolox_model()
 # picam_config = picam.create_preview_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1))
 # picam.configure(picam_config)
 # picam.start()
-cap = cv2.VideoCapture('/home/clark/Desktop/model_training/validation_vids/masters_2.mp4')
-# Initialize the BYTETracker
-parser = argparse.ArgumentParser("basic args")
-parser.add_argument("--track_thresh", type=float, default=0.35, help="tracking confidence threshold")
-parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
-parser.add_argument("--match_thresh", type=float, default=0.80, help="matching threshold for tracking")
-parser.add_argument('--min-box-area', type=float, default=10, help='filter out tiny boxes')
-parser.add_argument("--mot20", dest="mot20", default=True, action="store_true", help="test mot20.")
+video_path = resolve_video_path(args.video)
+print(f"Using video: {video_path}")
+cap = cv2.VideoCapture(video_path)
+if not cap.isOpened():
+    raise RuntimeError(f"Could not open video: {video_path}")
 
-btrack = BYTETracker(args=parser.parse_args())
+# Initialize the BYTETracker
+btrack = BYTETracker(args=args)
 frame_count = 0
 tracks = []
 useByteTrack = True

@@ -166,13 +166,27 @@ class Websocket_handler():
             self.websockets.discard(websocket)
 
 class CameraStreamer:
+    ML_STREAM_NAME = "lores"
+    ML_STREAM_SIZE = (640, 640)
+
     def __init__(self):
         subprocess.Popen(["./mediamtx"], cwd="/home/clark64/Downloads", )
         self.picam2 = Picamera2()
+        self._ml_capture_fallback_logged = False
         encoder = H264Encoder(bitrate=15_000_000, iperiod=30)
-        self.picam2.configure(self.picam2.create_video_configuration(main={"format": 'BGR888', "size": (1920, 1080)}, transform=Transform(hflip=1, vflip=1)))
+        try:
+            self.picam2.configure(self._create_video_configuration(use_lores=True))
+        except Exception as exc:
+            logging.warning(
+                "Falling back to main-only camera configuration: %s",
+                exc
+            )
+            self._ml_capture_fallback_logged = True
+            self.picam2.configure(self._create_video_configuration(use_lores=False))
         ffmpeg_process = subprocess.Popen([
             'ffmpeg',
+            '-nostats',
+            '-loglevel', 'warning',
             '-i', 'pipe:0',
             '-c:v', 'copy', 
             '-f', 'rtsp',  
@@ -186,15 +200,40 @@ class CameraStreamer:
         # wait for camera
         time.sleep(2)
         self.picam2.autofocus_cycle(wait = False)
+
+    def _create_video_configuration(self, use_lores):
+        if not use_lores:
+            return self.picam2.create_video_configuration(
+                main={"format": 'BGR888', "size": (1920, 1080)},
+                transform=Transform(hflip=1, vflip=1)
+            )
+
+        return self.picam2.create_video_configuration(
+            main={"format": 'BGR888', "size": (1920, 1080)},
+            lores={"format": 'BGR888', "size": self.ML_STREAM_SIZE},
+            transform=Transform(hflip=1, vflip=1)
+        )
     
     def capture_array(self):
         return self.picam2.capture_array()
+
+    def capture_ml_array(self):
+        try:
+            return self.picam2.capture_array(self.ML_STREAM_NAME)
+        except Exception as exc:
+            if not self._ml_capture_fallback_logged:
+                logging.warning(
+                    "Falling back to main camera stream for ML capture: %s",
+                    exc
+                )
+                self._ml_capture_fallback_logged = True
+            return self.capture_array()
 
 def send_ws_message(message):
     if "wsHandler" not in globals():
         return
     wsHandler.send_from_thread(message)
-    print(message)
+    logging.debug("websocket broadcast: %s", message)
 
 camera = CameraStreamer()
 pTrack = PersonTracking(send_ws_message, camera)
