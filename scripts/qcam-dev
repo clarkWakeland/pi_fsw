@@ -9,7 +9,7 @@ previous_file="${QCAM_PREVIOUS_FILE:-/opt/fsw.previous}"
 streamer_service="${QCAM_STREAMER_SERVICE:-streamer.service}"
 updater_service="${QCAM_UPDATER_SERVICE:-updater.service}"
 full_sync=0
-restart_updater="${QCAM_RESTART_UPDATER:-0}"
+restart_updater="${QCAM_RESTART_UPDATER:-1}"
 follow_logs=0
 command=""
 
@@ -23,7 +23,7 @@ Usage:
 
 Commands:
   deploy   Sync this repo to /opt/releases/pi_fsw-dev, mark it 0.0.0-dev,
-           switch /opt/fsw to it, and restart streamer.service.
+           switch /opt/fsw to it, and restart streamer.service/updater.service.
   revert   Switch /opt/fsw back to the release saved before deploy.
   status   Show the active /opt/fsw target, saved previous target, service state,
            and active device_version.json.
@@ -33,8 +33,9 @@ Options:
   --host HOST          SSH host alias to use. Default: qcam1.
   --target PATH       Remote dev release path. Default: /opt/releases/pi_fsw-dev.
   --full              Include model directories even if they already exist remotely.
-  --restart-updater   Restart updater.service too, so /version immediately reports
-                      the 0.0.0-dev marker.
+  --restart-updater   Restart updater.service too. This is the default.
+  --no-restart-updater
+                      Do not restart updater.service after deploy/revert.
   --follow            Follow logs for the logs command.
   -h, --help          Show this help.
 
@@ -211,7 +212,10 @@ if [ -f /opt/fsw/device_version.json ]; then
     cat /opt/fsw/device_version.json
 else
     echo /opt/fsw/device_version.json missing
-fi"
+fi
+echo
+echo Version endpoint:
+curl -fsS http://127.0.0.1:5001/version 2>/dev/null || echo unavailable"
 }
 
 logs() {
@@ -245,6 +249,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --restart-updater)
             restart_updater=1
+            shift
+            ;;
+        --no-restart-updater)
+            restart_updater=0
             shift
             ;;
         --follow)

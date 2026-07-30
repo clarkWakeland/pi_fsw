@@ -4,6 +4,8 @@ import json
 import apply_update
 
 app = Flask(__name__)
+VERSION_PATH = Path("/opt/fsw/device_version.json")
+DEVICE_METADATA_PATH = Path("/opt/device_metadata.json")
 
 @app.route('/')
 def index():
@@ -11,7 +13,10 @@ def index():
 
 @app.route('/version', methods=['GET'])
 def get_version():
-    data = json.loads(Path('device_version.json').read_text(encoding='utf-8'))
+    data = json.loads(VERSION_PATH.read_text(encoding='utf-8'))
+    if DEVICE_METADATA_PATH.exists():
+        device_metadata = json.loads(DEVICE_METADATA_PATH.read_text(encoding='utf-8'))
+        data.update(device_metadata)
     return jsonify(data)
 
 @app.route('/update', methods=['POST'])
@@ -33,4 +38,4 @@ def update_firmware():
     
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", debug=True, port=5001)
+    app.run(host="0.0.0.0", debug=False, port=5001)
