@@ -14,3 +14,6 @@ for expected in "deploy" "revert" "status" "logs"; do
 done
 
 grep -q "0.0.0-dev" "$script"
+grep -q 'restart_updater="${QCAM_RESTART_UPDATER:-1}"' "$script"
+grep -q -- "--no-restart-updater" <<<"$help_output"
+grep -q "Version endpoint:" "$script"

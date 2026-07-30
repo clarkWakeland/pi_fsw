@@ -1,6 +1,6 @@
 from picamera2 import Picamera2
 from libcamera import Transform
-from picamera2.encoders import H264Encoder, Quality
+from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput
 import time
 from control import PersonTracking
@@ -10,6 +10,13 @@ import json
 import subprocess
 import smbus2
 import logging
+import threading
+from stream_settings import (
+    bitrate_settings_payload,
+    load_bitrate_bps,
+    parse_bitrate_bps,
+    save_bitrate_bps,
+)
 
 # Battery poller task
 I2C_BUS = 1
@@ -33,6 +40,8 @@ class Websocket_handler():
             "canvas-click": self.handle_canvas_click,
             "toggle-tracking": self.handle_toggle_tracking,
             "get-tracking-status": self.handle_get_tracking_status,
+            "get-stream-settings": self.handle_get_stream_settings,
+            "set-stream-bitrate": self.handle_set_stream_bitrate,
             "manual-control": self.handle_manual_control,
             "autofocus": self.handle_autofocus,
             "toggle-auto-acquire": self.handle_auto_acquire
@@ -65,6 +74,30 @@ class Websocket_handler():
         status = self.tracker.get_tracking_status()
         await websocket.send(json.dumps({"tracking_primed": status["run_ml"]}))
         await websocket.send(json.dumps({"type": "tracking-state", "payload": status}))
+
+    async def handle_get_stream_settings(self, data, websocket):
+        await websocket.send(json.dumps({
+            "type": "stream-settings",
+            "payload": self.camera.get_stream_settings(),
+        }))
+
+    async def handle_set_stream_bitrate(self, data, websocket):
+        try:
+            if "bitrate_bps" in data:
+                bitrate_bps = parse_bitrate_bps(data.get("bitrate_bps"))
+            elif "bitrate_mbps" in data:
+                bitrate_bps = parse_bitrate_bps(float(data.get("bitrate_mbps")) * 1_000_000)
+            else:
+                raise ValueError("bitrate_bps is required")
+
+            loop = asyncio.get_running_loop()
+            payload = await loop.run_in_executor(None, self.camera.set_bitrate, bitrate_bps)
+            await self.broadcast({"type": "stream-settings", "payload": payload})
+        except Exception as exc:
+            await websocket.send(json.dumps({
+                "type": "stream-settings-error",
+                "payload": {"message": str(exc)},
+            }))
 
     async def handle_manual_control(self, data, websocket):
         analog = data.get('analog', {})
@@ -170,10 +203,14 @@ class CameraStreamer:
     ML_STREAM_SIZE = (640, 640)
 
     def __init__(self):
-        subprocess.Popen(["./mediamtx"], cwd="/home/clark64/Downloads", )
+        self.mediamtx_process = subprocess.Popen(["./mediamtx"], cwd="/home/clark64/Downloads", )
         self.picam2 = Picamera2()
         self._ml_capture_fallback_logged = False
-        encoder = H264Encoder(bitrate=15_000_000, iperiod=30)
+        self.stream_lock = threading.Lock()
+        self.bitrate_bps = load_bitrate_bps()
+        self.encoder = None
+        self.ffmpeg_process = None
+
         try:
             self.picam2.configure(self._create_video_configuration(use_lores=True))
         except Exception as exc:
@@ -183,7 +220,15 @@ class CameraStreamer:
             )
             self._ml_capture_fallback_logged = True
             self.picam2.configure(self._create_video_configuration(use_lores=False))
-        ffmpeg_process = subprocess.Popen([
+
+        self.start_stream()
+
+        # wait for camera
+        time.sleep(2)
+        self.picam2.autofocus_cycle(wait = False)
+
+    def _start_ffmpeg(self):
+        return subprocess.Popen([
             'ffmpeg',
             '-nostats',
             '-loglevel', 'warning',
@@ -192,14 +237,78 @@ class CameraStreamer:
             '-f', 'rtsp',  
             '-rtsp_transport', 'tcp',
             'rtsp://0.0.0.0:8554/live.stream'  # Output to mediamtx server
-        ], stdin=subprocess.PIPE)        
+        ], stdin=subprocess.PIPE)
 
-        print("started ffmpeg process")
-        self.picam2.start_recording(encoder, FileOutput(ffmpeg_process.stdin), quality=Quality.VERY_HIGH)
+    def start_stream(self):
+        with self.stream_lock:
+            self.encoder = H264Encoder(bitrate=self.bitrate_bps, iperiod=30)
+            self.ffmpeg_process = self._start_ffmpeg()
+            print(f"started ffmpeg process at bitrate {self.bitrate_bps} bps")
+            self.picam2.start_recording(
+            self.encoder,
+            FileOutput(self.ffmpeg_process.stdin)
+            )
 
-        # wait for camera
-        time.sleep(2)
-        self.picam2.autofocus_cycle(wait = False)
+    def stop_stream(self):
+        try:
+            self.picam2.stop_recording()
+        except Exception as exc:
+            logging.warning("stop_recording failed or stream was already stopped: %s", exc)
+
+        if self.ffmpeg_process is None:
+            return
+
+        try:
+            if self.ffmpeg_process.stdin:
+                self.ffmpeg_process.stdin.close()
+        except Exception:
+            pass
+
+        self.ffmpeg_process.terminate()
+        try:
+            self.ffmpeg_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self.ffmpeg_process.kill()
+            self.ffmpeg_process.wait(timeout=2)
+        finally:
+            self.ffmpeg_process = None
+            self.encoder = None
+
+    def restart_stream(self):
+        with self.stream_lock:
+            self.stop_stream()
+            self.encoder = H264Encoder(bitrate=self.bitrate_bps, iperiod=30)
+            self.ffmpeg_process = self._start_ffmpeg()
+            print(f"restarted ffmpeg process at bitrate {self.bitrate_bps} bps")
+            self.picam2.start_recording(
+            self.encoder,
+            FileOutput(self.ffmpeg_process.stdin)
+            )
+
+    def get_stream_settings(self):
+        return bitrate_settings_payload(self.bitrate_bps)
+
+    def set_bitrate(self, bitrate_bps):
+        bitrate_bps = parse_bitrate_bps(bitrate_bps)
+        if bitrate_bps == self.bitrate_bps:
+            save_bitrate_bps(bitrate_bps)
+            return self.get_stream_settings()
+
+        previous_bitrate_bps = self.bitrate_bps
+        self.bitrate_bps = bitrate_bps
+        try:
+            self.restart_stream()
+        except Exception:
+            logging.exception("Failed to restart stream at bitrate %s", bitrate_bps)
+            self.bitrate_bps = previous_bitrate_bps
+            try:
+                self.restart_stream()
+            except Exception:
+                logging.exception("Failed to restore previous bitrate %s", previous_bitrate_bps)
+            raise
+
+        save_bitrate_bps(bitrate_bps)
+        return self.get_stream_settings()
 
     def _create_video_configuration(self, use_lores):
         if not use_lores:
@@ -235,14 +344,22 @@ def send_ws_message(message):
     wsHandler.send_from_thread(message)
     logging.debug("websocket broadcast: %s", message)
 
-camera = CameraStreamer()
-pTrack = PersonTracking(send_ws_message, camera)
-wsHandler = Websocket_handler(pTrack, camera)
+def main():
+    global camera
+    global pTrack
+    global wsHandler
 
-if __name__ == '__main__':
+    camera = CameraStreamer()
+    pTrack = PersonTracking(send_ws_message, camera)
+    wsHandler = Websocket_handler(pTrack, camera)
+
     try:
         asyncio.run(wsHandler.main())
     except KeyboardInterrupt:
         print("Shutting down...")
+
+
+if __name__ == '__main__':
+    main()
 
     

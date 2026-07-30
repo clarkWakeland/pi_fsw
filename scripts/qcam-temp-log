@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+host="${QCAM_HOST:-qcam1}"
+interval="${QCAM_TEMP_INTERVAL:-30}"
+output="${QCAM_TEMP_LOG:-$repo_root/logs/qcam1-temperature.csv}"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  scripts/qcam-temp-log [options]
+
+Poll qcam1 over SSH with `vcgencmd measure_temp` and append results to a
+local CSV file every 30 seconds.
+
+Options:
+  --host HOST       SSH host alias to use. Default: qcam1.
+  --interval SEC    Poll interval in seconds. Default: 30.
+  --output PATH     Local CSV file. Default: logs/qcam1-temperature.csv.
+  -h, --help        Show this help.
+
+Environment overrides:
+  QCAM_HOST, QCAM_TEMP_INTERVAL, QCAM_TEMP_LOG
+
+Stop with Ctrl-C.
+USAGE
+}
+
+die() {
+    echo "qcam-temp-log: $*" >&2
+    exit 1
+}
+
+require_tools() {
+    command -v ssh >/dev/null || die "ssh is required"
+    command -v date >/dev/null || die "date is required"
+}
+
+validate_interval() {
+    [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--interval must be a positive number"
+    awk -v value="$interval" 'BEGIN { exit !(value > 0) }' || die "--interval must be greater than zero"
+}
+
+read_temp() {
+    ssh "$host" "vcgencmd measure_temp"
+}
+
+parse_temp_c() {
+    local raw="$1"
+    [[ "$raw" =~ temp=([0-9.]+) ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+append_header_if_needed() {
+    mkdir -p "$(dirname "$output")"
+    if [[ ! -s "$output" ]]; then
+        printf 'timestamp_utc,host,temp_c,raw\n' >>"$output"
+    fi
+}
+
+csv_escape() {
+    local value="$1"
+    value="${value//\"/\"\"}"
+    printf '"%s"' "$value"
+}
+
+log_once() {
+    local timestamp raw temp_c
+    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    if raw="$(read_temp 2>&1)" && temp_c="$(parse_temp_c "$raw")"; then
+        {
+            printf '%s,%s,%s,' "$timestamp" "$host" "$temp_c"
+            csv_escape "$raw"
+            printf '\n'
+        } >>"$output"
+        printf '%s %s %s C\n' "$timestamp" "$host" "$temp_c"
+        return
+    fi
+
+    {
+        printf '%s,%s,,' "$timestamp" "$host"
+        csv_escape "ERROR: $raw"
+        printf '\n'
+    } >>"$output"
+    printf '%s %s ERROR: %s\n' "$timestamp" "$host" "$raw" >&2
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            [[ $# -ge 2 ]] || die "--host requires a value"
+            host="$2"
+            shift 2
+            ;;
+        --interval)
+            [[ $# -ge 2 ]] || die "--interval requires a value"
+            interval="$2"
+            shift 2
+            ;;
+        --output)
+            [[ $# -ge 2 ]] || die "--output requires a value"
+            output="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown argument: $1"
+            ;;
+    esac
+done
+
+require_tools
+validate_interval
+append_header_if_needed
+
+echo "Logging $host CPU temperature every ${interval}s to $output"
+echo "Stop with Ctrl-C."
+
+while true; do
+    log_once
+    sleep "$interval"
+done

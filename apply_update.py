@@ -27,6 +27,13 @@ def fail(msg):
     raise Exception(msg)
 
 
+def remove_path(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+
+
 def main():
     if not os.path.exists(PAYLOAD):
         fail("firmware_update.tar.gz not found")
@@ -37,11 +44,14 @@ def main():
 
     target = None
     service_stopped = False
+    release_created = False
+    symlink_switched = False
+    previous_target = os.path.realpath(CURRENT_LINK) if os.path.exists(CURRENT_LINK) else None
     
     try:
         # Clean staging (SAFE — not live code)
         for item in os.listdir(STAGING):
-            shutil.rmtree(os.path.join(STAGING, item))
+            remove_path(os.path.join(STAGING, item))
 
         # Extract payload
         with tarfile.open(PAYLOAD, "r:gz") as tar:
@@ -67,6 +77,7 @@ def main():
 
         # Move into durable releases directory
         shutil.move(extracted, target)
+        release_created = True
 
         # Stop service before switching
         run(["systemctl", "stop", SERVICE])
@@ -74,6 +85,7 @@ def main():
 
         # Atomically flip symlink
         run(["ln", "-sfn", target, CURRENT_LINK])
+        symlink_switched = True
 
         # Restart service
         run(["systemctl", "start", SERVICE])
@@ -91,6 +103,13 @@ def main():
         
     except Exception as e:
         print(f"Update failed: {e}", file=sys.stderr)
+
+        if symlink_switched and previous_target:
+            try:
+                print(f"Restoring previous release: {previous_target}", file=sys.stderr)
+                run(["ln", "-sfn", previous_target, CURRENT_LINK])
+            except Exception as restore_err:
+                print(f"Failed to restore previous release: {restore_err}", file=sys.stderr)
         
         # Attempt to restart service if it was stopped
         if service_stopped:
@@ -100,8 +119,8 @@ def main():
             except Exception as restart_err:
                 print(f"Failed to restart service: {restart_err}", file=sys.stderr)
         
-        # Cleanup failed release if it was created
-        if target and os.path.exists(target):
+        # Cleanup only releases created by this update attempt.
+        if release_created and target and os.path.exists(target):
             try:
                 shutil.rmtree(target)
                 print(f"Cleaned up failed release: {target}", file=sys.stderr)
