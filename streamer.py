@@ -2,13 +2,14 @@ from picamera2 import Picamera2
 from libcamera import Transform
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput
+import av
+import cv2
 import time
 from control import PersonTracking
 import websockets
 import asyncio
 import json
 import subprocess
-import smbus2
 import logging
 import threading
 from stream_settings import (
@@ -17,15 +18,6 @@ from stream_settings import (
     parse_bitrate_bps,
     save_bitrate_bps,
 )
-
-# Battery poller task
-I2C_BUS = 1
-ADDR = 0x36
-VOLTAGE_REG = 0x02
-POLL_INTERVAL = 120 # in seconds
-
-bus = smbus2.SMBus(I2C_BUS)
-
 
 class Websocket_handler():
     def __init__(self, person_tracking_instance, camera_instance):
@@ -132,33 +124,11 @@ class Websocket_handler():
         print(f"auto acquire set to {self.tracker.user_intent.auto_acquire}")
         self.tracker.emit_tracking_state(force=True)
 
-    def read_voltage(self) -> float:
-        val = bus.read_word_data(ADDR, VOLTAGE_REG)
-        swapped = ((val << 8) & 0xFF00) + (val >> 8)
-        return (swapped >> 3) * 1.25 / 1000.0
-
-    async def poll_battery(self):
-        loop = asyncio.get_event_loop()
-        while True:
-            try:
-                voltage = await loop.run_in_executor(None, self.read_voltage)
-                logging.info(f"Battery voltage: {voltage:.3f} V")
-                send_ws_message({"battery_voltage": voltage})
-
-            except Exception as e:
-                logging.error(f"Error polling battery voltage: {e}")
-
-            await asyncio.sleep(POLL_INTERVAL)
-
     async def main(self):
-        try:
-            self.loop = asyncio.get_running_loop()
-            async with websockets.serve(self.handle, "0.0.0.0", port=5000):
-                print("websocket server started on port 5000")
-                battery_task = asyncio.create_task(self.poll_battery())                    
-                await asyncio.Future() # run forever
-        finally:
-            battery_task.cancel()
+        self.loop = asyncio.get_running_loop()
+        async with websockets.serve(self.handle, "0.0.0.0", port=5000):
+            print("websocket server started on port 5000")
+            await asyncio.Future() # run forever
 
     async def broadcast(self, message):
         if not self.websockets:
@@ -198,6 +168,36 @@ class Websocket_handler():
         finally:
             self.websockets.discard(websocket)
 
+
+class LowLatencyH264Encoder(H264Encoder):
+    """Configure Picamera2's libx264 encoder for bounded live-stream latency."""
+
+    def _start(self):
+        super()._start()
+
+        try:
+            codec_context = self._stream.codec_context
+            codec_context.thread_count = 0
+            codec_context.thread_type = av.codec.context.ThreadType.SLICE
+            codec_context.max_b_frames = 0
+            codec_context.options.update({
+                "preset": "ultrafast",
+                "tune": "zerolatency",
+                "slices": "4",
+                "refs": "1",
+            })
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "Installed Picamera2/PyAV does not support the required "
+                "low-latency H.264 encoder settings"
+            ) from exc
+
+        logging.info(
+            "H.264 encoder configured for low latency: slice threads, "
+            "4 slices, no B-frames, 1 reference frame"
+        )
+
+
 class CameraStreamer:
     ML_STREAM_NAME = "lores"
     ML_STREAM_SIZE = (640, 640)
@@ -206,6 +206,7 @@ class CameraStreamer:
         self.mediamtx_process = subprocess.Popen(["./mediamtx"], cwd="/home/clark64/Downloads", )
         self.picam2 = Picamera2()
         self._ml_capture_fallback_logged = False
+        self._using_lores = False
         self.stream_lock = threading.Lock()
         self.bitrate_bps = load_bitrate_bps()
         self.encoder = None
@@ -213,6 +214,7 @@ class CameraStreamer:
 
         try:
             self.picam2.configure(self._create_video_configuration(use_lores=True))
+            self._using_lores = True
         except Exception as exc:
             logging.warning(
                 "Falling back to main-only camera configuration: %s",
@@ -232,16 +234,31 @@ class CameraStreamer:
             'ffmpeg',
             '-nostats',
             '-loglevel', 'warning',
+            '-f', 'h264',
+            '-framerate', '30',
+            '-use_wallclock_as_timestamps', '1',
+            '-fflags', 'nobuffer',
             '-i', 'pipe:0',
-            '-c:v', 'copy', 
-            '-f', 'rtsp',  
+            '-c:v', 'copy',
+            '-max_delay', '0',
+            '-muxdelay', '0',
+            '-flush_packets', '1',
+            '-f', 'rtsp',
             '-rtsp_transport', 'tcp',
-            'rtsp://0.0.0.0:8554/live.stream'  # Output to mediamtx server
+            'rtsp://127.0.0.1:8554/live.stream'  # Output to mediamtx server
         ], stdin=subprocess.PIPE)
+
+    def _create_encoder(self):
+        return LowLatencyH264Encoder(
+            bitrate=self.bitrate_bps,
+            iperiod=30,
+            framerate=30,
+            profile="baseline",
+        )
 
     def start_stream(self):
         with self.stream_lock:
-            self.encoder = H264Encoder(bitrate=self.bitrate_bps, iperiod=30)
+            self.encoder = self._create_encoder()
             self.ffmpeg_process = self._start_ffmpeg()
             print(f"started ffmpeg process at bitrate {self.bitrate_bps} bps")
             self.picam2.start_recording(
@@ -277,7 +294,7 @@ class CameraStreamer:
     def restart_stream(self):
         with self.stream_lock:
             self.stop_stream()
-            self.encoder = H264Encoder(bitrate=self.bitrate_bps, iperiod=30)
+            self.encoder = self._create_encoder()
             self.ffmpeg_process = self._start_ffmpeg()
             print(f"restarted ffmpeg process at bitrate {self.bitrate_bps} bps")
             self.picam2.start_recording(
@@ -313,12 +330,12 @@ class CameraStreamer:
     def _create_video_configuration(self, use_lores):
         if not use_lores:
             return self.picam2.create_video_configuration(
-                main={"format": 'BGR888', "size": (1920, 1080)},
+                main={"format": 'YUV420', "size": (1920, 1080)},
                 transform=Transform(hflip=1, vflip=1)
             )
 
         return self.picam2.create_video_configuration(
-            main={"format": 'BGR888', "size": (1920, 1080)},
+            main={"format": 'YUV420', "size": (1920, 1080)},
             lores={"format": 'BGR888', "size": self.ML_STREAM_SIZE},
             transform=Transform(hflip=1, vflip=1)
         )
@@ -326,7 +343,16 @@ class CameraStreamer:
     def capture_array(self):
         return self.picam2.capture_array()
 
+    def _capture_main_bgr_array(self):
+        frame = self.capture_array()
+        if frame is None:
+            return None
+        return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
+
     def capture_ml_array(self):
+        if not self._using_lores:
+            return self._capture_main_bgr_array()
+
         try:
             return self.picam2.capture_array(self.ML_STREAM_NAME)
         except Exception as exc:
@@ -336,7 +362,8 @@ class CameraStreamer:
                     exc
                 )
                 self._ml_capture_fallback_logged = True
-            return self.capture_array()
+            self._using_lores = False
+            return self._capture_main_bgr_array()
 
 def send_ws_message(message):
     if "wsHandler" not in globals():
