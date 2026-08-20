@@ -97,7 +97,7 @@ local_git_dirty() {
 }
 
 models_exist_remotely() {
-    remote "test -f $(quote "$dev_target")/hailo_models/barometric_beta.hef && test -f $(quote "$dev_target")/yolo_models/best_train6.pt" >/dev/null 2>&1
+    remote "test -f $(quote "$dev_target")/hailo_models/dashing_dolphin_masters.hef && test -f $(quote "$dev_target")/yolo_models/best_train6.pt" >/dev/null 2>&1
 }
 
 write_dev_version_marker() {

@@ -61,7 +61,7 @@ class PersonTracking:
         self.manual_y = 0.0
         self.manual_updated_at = 0.0
         self.manual_input_active = False
-        self.hailo = Hailo('hailo_models/barometric_beta.hef')
+        self.hailo = Hailo('hailo_models/dashing_dolphin_masters.hef')
         self.mc = MotorControl(ws_callback=ws_callback)
 
         threading.Thread(target = self.tracking_servo, daemon=True).start()
