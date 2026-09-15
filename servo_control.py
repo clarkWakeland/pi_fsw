@@ -9,7 +9,7 @@ class MotorControl:
     def __init__(self, ws_callback=None):
         self.X_SERVO_PIN = 0
         self.Y_SERVO_PIN = 1
-        self.PROPORTIONAL_GAIN = 0.023  # I love numbers that I pulled from thin air
+        self.PROPORTIONAL_GAIN = 0.0115  # Reduced tracking response to limit overshoot.
         self.DERIVATIVE_GAIN = 0.0005   # Experimental constants, deviation from these can result in oscillation
                                         # or sluggish movement, but can probably be tuned more
         self.last_x_delta = 0
@@ -27,11 +27,19 @@ class MotorControl:
         self.limit_event_cooldown_s = 1.0
         self.X_MIN_ANGLE = -90
         self.X_MAX_ANGLE = 90
-        self.Y_MIN_ANGLE = -5
-        self.Y_MAX_ANGLE = 90
+        self.Y_MIN_ANGLE = -90
+        self.Y_MAX_ANGLE = 0
+        # Reverse both physical axes at the shared output boundary so this
+        # applies consistently to tracking and every manual-control source.
+        self.X_SERVO_DIRECTION = -1.0
+        self.Y_SERVO_DIRECTION = -1.0
 
         # Manual-control tuning with a dedicated precision band for small stick inputs.
         self.MANUAL_DEADZONE = 0.08
+        # The PanTilt HAT uses integer-microsecond pulse widths. With its
+        # default 575-2325 us range, 0.31 degrees advances by about three
+        # microseconds per nonzero manual-control update.
+        self.MANUAL_MIN_STEP = 0.31
         self.MANUAL_PRECISION_BAND_MAX = 0.5
         # Keep low-band outputs above common stiction while preserving fine response.
         self.MANUAL_LOW_BAND_MAX_STEP = 0.55
@@ -81,6 +89,7 @@ class MotorControl:
     def _apply_axis_step(self, axis, step):
         axis = axis.lower()
         if axis == "x":
+            step *= self.X_SERVO_DIRECTION
             current_angle = self.virtual_pan_angle
             requested_angle = current_angle + step
             if requested_angle < self.X_MIN_ANGLE or requested_angle > self.X_MAX_ANGLE:
@@ -92,6 +101,7 @@ class MotorControl:
             return
 
         if axis == "y":
+            step *= self.Y_SERVO_DIRECTION
             current_angle = self.virtual_tilt_angle
             requested_angle = current_angle + step
             if requested_angle < self.Y_MIN_ANGLE or requested_angle > self.Y_MAX_ANGLE:
@@ -134,7 +144,7 @@ class MotorControl:
 
     def _manual_axis_to_step(self, axis_value):
         magnitude = abs(axis_value)
-        if magnitude < self.MANUAL_DEADZONE:
+        if magnitude <= self.MANUAL_DEADZONE:
             return 0.0
 
         if magnitude < self.MANUAL_PRECISION_BAND_MAX:
@@ -148,6 +158,7 @@ class MotorControl:
             curved = normalized ** self.MANUAL_HIGH_BAND_EXPO
             step = self.MANUAL_LOW_BAND_MAX_STEP + curved * (self.MANUAL_MAX_STEP - self.MANUAL_LOW_BAND_MAX_STEP)
 
+        step = max(step, self.MANUAL_MIN_STEP)
         return float(np.copysign(step, axis_value))
 
     def set_manual_input(self, x_input, y_input, max_step_change=None):

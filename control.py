@@ -61,13 +61,20 @@ class PersonTracking:
         self.manual_y = 0.0
         self.manual_updated_at = 0.0
         self.manual_input_active = False
-        self.hailo = Hailo('hailo_models/dashing_dolphin_masters.hef')
-        self.mc = MotorControl(ws_callback=ws_callback)
+        self.hailo = None
+        self.ml_available = False
+        self.ml_error = None
+        try:
+            self.hailo = Hailo('hailo_models/dashing_dolphin_masters.hef')
+            self.ml_available = True
+        except Exception as exc:
+            self.ml_error = f"{type(exc).__name__}: {exc}"
+            logger.exception(
+                "Hailo initialization failed; continuing without ML tracking. "
+                "RTSP streaming and manual servo control remain available."
+            )
 
-        threading.Thread(target = self.tracking_servo, daemon=True).start()
-        threading.Thread(target = self.manual_servo_loop, daemon=True).start()
-        threading.Thread(target = self.ml_loop, daemon=True).start()
-        threading.Thread(target = self.state_heartbeat_loop, daemon=True).start()
+        self.mc = MotorControl(ws_callback=ws_callback)
 
         # Initialize the BYTETracker
         parser = argparse.ArgumentParser("basic args")
@@ -78,6 +85,11 @@ class PersonTracking:
         parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
 
         self.BYTEtracker = BYTETracker(args=parser.parse_args())
+
+        threading.Thread(target=self.tracking_servo, daemon=True).start()
+        threading.Thread(target=self.manual_servo_loop, daemon=True).start()
+        threading.Thread(target=self.ml_loop, daemon=True).start()
+        threading.Thread(target=self.state_heartbeat_loop, daemon=True).start()
 
     def _capture_ml_frame(self):
         if self.camera is None:
@@ -107,6 +119,8 @@ class PersonTracking:
             return {
                 "state": self.tracking_state,
                 "run_ml": self.user_intent.runML,
+                "ml_available": self.ml_available,
+                "ml_error": self.ml_error,
                 "auto_acquire": self.user_intent.auto_acquire,
                 "track_id": track_id,
                 "lost_frames": int(self.lost_frames),
@@ -145,10 +159,18 @@ class PersonTracking:
             self.emit_tracking_state()
 
     def set_tracking_enabled(self, enabled):
+        unavailable_requested = bool(enabled and not self.ml_available)
+        if unavailable_requested:
+            logger.warning(
+                "Ignoring request to enable tracking because Hailo ML is unavailable: %s",
+                self.ml_error or "unknown Hailo error",
+            )
+            enabled = False
+
         self.user_intent.set_ML(enabled)
         if enabled:
             self._set_state("PRIMED")
-            return
+            return True
 
         with self.status_lock:
             self.tracking_object = None
@@ -163,10 +185,12 @@ class PersonTracking:
             self.smoothed_target_center = None
         self._clear_manual_input(reset_steps=True)
         self._set_state("IDLE")
+        if unavailable_requested:
+            self.emit_tracking_state(force=True)
+        return False
 
     def toggle_tracking(self):
-        self.set_tracking_enabled(not self.user_intent.runML)
-        return self.user_intent.runML
+        return self.set_tracking_enabled(not self.user_intent.runML)
 
     def state_heartbeat_loop(self):
         while True:
@@ -176,8 +200,8 @@ class PersonTracking:
 
     def start_tracking(self, x, y):
         logger.info(f"received {x} x and {y} y")
-        self.set_tracking_enabled(True)
-        self.user_intent.set_click_coordinates(x, y)
+        if self.set_tracking_enabled(True):
+            self.user_intent.set_click_coordinates(x, y)
     
     def stop_tracking(self):
         self.set_tracking_enabled(False)
@@ -227,12 +251,19 @@ class PersonTracking:
         while True:
             if self.user_intent.runML:
                 next_run += ML_INTERVAL_SECONDS
-                frame = self._capture_ml_frame()
-                if frame is not None:
-                    self.process_image(frame)
-                    if self.tracking_object:
-                        logger.debug("Tracking box: %s", self.tracking_object.tlbr)
-                        self.adjust_delta(self.tracking_object.tlbr)
+                try:
+                    frame = self._capture_ml_frame()
+                    if frame is not None:
+                        self.process_image(frame)
+                        if self.tracking_object:
+                            logger.debug("Tracking box: %s", self.tracking_object.tlbr)
+                            self.adjust_delta(self.tracking_object.tlbr)
+                except Exception as exc:
+                    logger.exception(
+                        "Hailo inference failed; disabling ML tracking while "
+                        "keeping RTSP streaming available."
+                    )
+                    self._mark_ml_unavailable(exc)
 
                 now = time.monotonic()
                 sleep_for = deadline_sleep_seconds(now, next_run)
@@ -244,11 +275,23 @@ class PersonTracking:
 
             next_run = time.monotonic()
             time.sleep(ML_INTERVAL_SECONDS)
+
+    def _mark_ml_unavailable(self, error):
+        with self.status_lock:
+            self.hailo = None
+            self.ml_available = False
+            self.ml_error = f"{type(error).__name__}: {error}"
+
+        self.set_tracking_enabled(False)
+        self.emit_tracking_state(force=True)
         
     def process_image(self, image):
         ''' 
         Process a single image, return object tracks
         '''
+        if not self.ml_available or self.hailo is None:
+            return []
+
         image = ensure_inference_size(image, ML_INPUT_SIZE)
         results = self.hailo.run(image)[0] #  returns normalized xyxy boxes with confidence
         results = prepare_hailo_detections(results, image_size=ML_INPUT_SIZE, iou_threshold=0.7)
