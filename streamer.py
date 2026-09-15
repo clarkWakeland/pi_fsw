@@ -12,12 +12,21 @@ import json
 import subprocess
 import logging
 import threading
+from fractions import Fraction
 from stream_settings import (
     bitrate_settings_payload,
     load_bitrate_bps,
     parse_bitrate_bps,
     save_bitrate_bps,
 )
+
+
+STREAM_SIZE = (1280, 720)
+STREAM_FRAME_RATE = Fraction(60000, 1001)
+STREAM_FRAME_RATE_FFMPEG = "60000/1001"
+STREAM_GOP_FRAMES = 60
+SENSOR_OUTPUT_SIZE = (1536, 864)
+SENSOR_BIT_DEPTH = 10
 
 class Websocket_handler():
     def __init__(self, person_tracking_instance, camera_instance):
@@ -235,7 +244,7 @@ class CameraStreamer:
             '-nostats',
             '-loglevel', 'warning',
             '-f', 'h264',
-            '-framerate', '30',
+            '-framerate', STREAM_FRAME_RATE_FFMPEG,
             '-use_wallclock_as_timestamps', '1',
             '-fflags', 'nobuffer',
             '-i', 'pipe:0',
@@ -251,8 +260,8 @@ class CameraStreamer:
     def _create_encoder(self):
         return LowLatencyH264Encoder(
             bitrate=self.bitrate_bps,
-            iperiod=30,
-            framerate=30,
+            iperiod=STREAM_GOP_FRAMES,
+            framerate=STREAM_FRAME_RATE,
             profile="baseline",
         )
 
@@ -328,16 +337,22 @@ class CameraStreamer:
         return self.get_stream_settings()
 
     def _create_video_configuration(self, use_lores):
+        common_configuration = {
+            "main": {"format": 'YUV420', "size": STREAM_SIZE},
+            "sensor": {
+                "output_size": SENSOR_OUTPUT_SIZE,
+                "bit_depth": SENSOR_BIT_DEPTH,
+            },
+            "controls": {"FrameRate": float(STREAM_FRAME_RATE)},
+            "transform": Transform(hflip=1, vflip=1),
+        }
+
         if not use_lores:
-            return self.picam2.create_video_configuration(
-                main={"format": 'YUV420', "size": (1920, 1080)},
-                transform=Transform(hflip=1, vflip=1)
-            )
+            return self.picam2.create_video_configuration(**common_configuration)
 
         return self.picam2.create_video_configuration(
-            main={"format": 'YUV420', "size": (1920, 1080)},
             lores={"format": 'BGR888', "size": self.ML_STREAM_SIZE},
-            transform=Transform(hflip=1, vflip=1)
+            **common_configuration,
         )
     
     def capture_array(self):

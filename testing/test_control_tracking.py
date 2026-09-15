@@ -23,7 +23,7 @@ class PanTiltStub:
 
 
 class MotorStub:
-    def __init__(self):
+    def __init__(self, ws_callback=None):
         self.reset_called = False
         self.manual_calls = []
 
@@ -52,6 +52,7 @@ sys.modules["yolox.tracker"] = yolox_tracker_module
 sys.modules["yolox.tracker.byte_tracker"] = yolox_byte_tracker_module
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import control as control_module
 from control import PersonTracking
 from userIntent import UserIntent
 
@@ -81,8 +82,80 @@ def make_tracker():
     tracker.manual_y = 0.0
     tracker.manual_updated_at = 0.0
     tracker.manual_input_active = False
+    tracker.hailo = object()
+    tracker.ml_available = True
+    tracker.ml_error = None
     tracker.mc = MotorStub()
     return tracker
+
+
+def test_hailo_startup_failure_keeps_tracking_controller_alive(monkeypatch):
+    started_threads = []
+
+    class ThreadStub:
+        def __init__(self, target, daemon):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            started_threads.append(self.target.__name__)
+
+    class ByteTrackerStub:
+        def __init__(self, args):
+            self.args = args
+
+    def raise_hailo_error(_model_path):
+        raise RuntimeError("hailort driver ioctl failed")
+
+    monkeypatch.setattr(control_module, "Hailo", raise_hailo_error)
+    monkeypatch.setattr(control_module, "MotorControl", MotorStub)
+    monkeypatch.setattr(control_module, "BYTETracker", ByteTrackerStub)
+    monkeypatch.setattr(control_module.threading, "Thread", ThreadStub)
+    monkeypatch.setattr(sys, "argv", ["test-control"])
+
+    tracker = PersonTracking()
+    status = tracker.get_tracking_status()
+
+    assert tracker.hailo is None
+    assert not status["ml_available"]
+    assert status["ml_error"] == "RuntimeError: hailort driver ioctl failed"
+    assert not status["run_ml"]
+    assert isinstance(tracker.mc, MotorStub)
+    assert isinstance(tracker.BYTEtracker, ByteTrackerStub)
+    assert started_threads == [
+        "tracking_servo",
+        "manual_servo_loop",
+        "ml_loop",
+        "state_heartbeat_loop",
+    ]
+
+
+def test_tracking_cannot_be_enabled_when_hailo_is_unavailable():
+    tracker = make_tracker()
+    tracker.hailo = None
+    tracker.ml_available = False
+    tracker.ml_error = "RuntimeError: Hailo unavailable"
+
+    enabled = tracker.set_tracking_enabled(True)
+
+    assert not enabled
+    assert not tracker.user_intent.runML
+    assert tracker.tracking_state == "IDLE"
+    assert tracker.ws_events[-1]["payload"]["ml_available"] is False
+
+
+def test_runtime_hailo_failure_disables_tracking_but_preserves_manual_control():
+    tracker = make_tracker()
+    tracker.set_tracking_enabled(True)
+
+    tracker._mark_ml_unavailable(RuntimeError("device disconnected"))
+    tracker.manual_control({"x": 0.25, "y": -0.5, "source": "test"})
+
+    assert not tracker.ml_available
+    assert tracker.ml_error == "RuntimeError: device disconnected"
+    assert not tracker.user_intent.runML
+    assert tracker.tracking_state == "IDLE"
+    assert tracker.manual_input_active
 
 
 def test_click_target_requires_three_observed_frames_before_motion():

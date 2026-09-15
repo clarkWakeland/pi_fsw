@@ -3,6 +3,7 @@ import asyncio
 import json
 import sys
 import types
+from fractions import Fraction
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -66,7 +67,17 @@ websockets_module.serve = object
 sys.modules["websockets"] = websockets_module
 
 import streamer as streamer_module
-from streamer import CameraStreamer, LowLatencyH264Encoder, Websocket_handler
+from streamer import (
+    CameraStreamer,
+    LowLatencyH264Encoder,
+    SENSOR_BIT_DEPTH,
+    SENSOR_OUTPUT_SIZE,
+    STREAM_FRAME_RATE,
+    STREAM_FRAME_RATE_FFMPEG,
+    STREAM_GOP_FRAMES,
+    STREAM_SIZE,
+    Websocket_handler,
+)
 
 
 class CameraStub:
@@ -153,8 +164,8 @@ def test_camera_streamer_preserves_explicit_encoder_bitrate():
     encoder = args[0]
     assert isinstance(encoder, LowLatencyH264Encoder)
     assert encoder.bitrate == 60_000_000
-    assert encoder.iperiod == 30
-    assert encoder.framerate == 30
+    assert encoder.iperiod == STREAM_GOP_FRAMES
+    assert encoder.framerate == STREAM_FRAME_RATE
     assert encoder.profile == "baseline"
     assert "quality" not in kwargs
 
@@ -217,7 +228,7 @@ def test_camera_streamer_starts_ffmpeg_with_live_timestamps_and_no_mux_delay(mon
         "-nostats",
         "-loglevel", "warning",
         "-f", "h264",
-        "-framerate", "30",
+        "-framerate", STREAM_FRAME_RATE_FFMPEG,
         "-use_wallclock_as_timestamps", "1",
         "-fflags", "nobuffer",
         "-i", "pipe:0",
@@ -237,8 +248,13 @@ def test_camera_streamer_encodes_yuv_main_and_preserves_bgr_ml_stream():
 
     configuration = camera._create_video_configuration(use_lores=True)
 
-    assert configuration["main"] == {"format": "YUV420", "size": (1920, 1080)}
+    assert configuration["main"] == {"format": "YUV420", "size": STREAM_SIZE}
     assert configuration["lores"] == {"format": "BGR888", "size": (640, 640)}
+    assert configuration["sensor"] == {
+        "output_size": SENSOR_OUTPUT_SIZE,
+        "bit_depth": SENSOR_BIT_DEPTH,
+    }
+    assert configuration["controls"]["FrameRate"] == float(Fraction(60000, 1001))
 
 
 def test_camera_streamer_main_only_fallback_remains_yuv():
@@ -246,7 +262,12 @@ def test_camera_streamer_main_only_fallback_remains_yuv():
 
     configuration = camera._create_video_configuration(use_lores=False)
 
-    assert configuration["main"] == {"format": "YUV420", "size": (1920, 1080)}
+    assert configuration["main"] == {"format": "YUV420", "size": STREAM_SIZE}
+    assert configuration["sensor"] == {
+        "output_size": SENSOR_OUTPUT_SIZE,
+        "bit_depth": SENSOR_BIT_DEPTH,
+    }
+    assert configuration["controls"]["FrameRate"] == float(Fraction(60000, 1001))
     assert "lores" not in configuration
 
 
