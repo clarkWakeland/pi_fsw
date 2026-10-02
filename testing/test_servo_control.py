@@ -130,8 +130,8 @@ def test_manual_input_can_limit_acceleration_between_steps():
     motor.set_manual_input(1.0, 0.0, max_step_change=0.3)
     motor.set_manual_input(1.0, 0.0, max_step_change=0.3)
 
-    assert np.isclose(motor.virtual_pan_angle, -0.56)
-    np.testing.assert_allclose(pan.targets[-2:], [-0.28, -0.56], rtol=1e-5)
+    assert np.isclose(motor.virtual_pan_angle, 0.56)
+    np.testing.assert_allclose(pan.targets[-2:], [0.28, 0.56], rtol=1e-5)
 
 
 def test_initial_target_starts_from_esp32_feedback():

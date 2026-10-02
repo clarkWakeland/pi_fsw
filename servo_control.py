@@ -214,7 +214,9 @@ class MotorControl:
         x_input = max(-1.0, min(1.0, float(x_input)))
         y_input = max(-1.0, min(1.0, float(y_input)))
 
-        x_step = self._manual_axis_to_step(-x_input)
+        # The brushless pan assembly is mounted opposite to the previous servo,
+        # so preserve the joystick's sign for manual pan commands.
+        x_step = self._manual_axis_to_step(x_input)
         y_step = self._manual_axis_to_step(-y_input)
 
         if max_step_change is not None:
