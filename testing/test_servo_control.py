@@ -34,8 +34,8 @@ def make_motor(pan_angle=0.0, tilt_angle=0.0):
 def test_tracking_proportional_gain_is_reduced_to_limit_overshoot():
     motor, _, _ = make_motor()
 
-    assert motor.PROPORTIONAL_GAIN == 0.0115
-    assert motor.DERIVATIVE_GAIN == 0.0005
+    assert motor.PROPORTIONAL_GAIN == 0.006
+    assert motor.DERIVATIVE_GAIN == 0.00025
     assert motor.TILT_PROPORTIONAL_GAIN == 0.006
     assert motor.TILT_DERIVATIVE_GAIN == 0.00025
 

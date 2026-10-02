@@ -13,9 +13,8 @@ logger = logging.getLogger(__name__)
 class MotorControl:
    
     def __init__(self, ws_callback=None, axis_controllers=None):
-        self.PROPORTIONAL_GAIN = 0.0115  # Reduced tracking response to limit overshoot.
-        self.DERIVATIVE_GAIN = 0.0005   # Experimental constants, deviation from these can result in oscillation
-                                        # or sluggish movement, but can probably be tuned more
+        self.PROPORTIONAL_GAIN = 0.006
+        self.DERIVATIVE_GAIN = 0.00025
         # Tilt has more visible image motion per degree and was oscillating
         # around the target with the shared pan gains. Keep it independently
         # tunable and start with approximately half the prior response.
