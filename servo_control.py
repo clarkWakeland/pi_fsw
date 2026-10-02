@@ -31,7 +31,7 @@ class MotorControl:
         self.limit_event_cooldown_s = 1.0
         self.X_MIN_ANGLE = -90
         self.X_MAX_ANGLE = 90
-        self.Y_MIN_ANGLE = -5
+        self.Y_MIN_ANGLE = 0
         self.Y_MAX_ANGLE = 90
         self.angle_lock = threading.Lock()
         self.angle_initialized = {"x": False, "y": False}

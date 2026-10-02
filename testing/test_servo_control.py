@@ -61,15 +61,15 @@ def test_shared_motor_boundary_preserves_both_servo_axis_directions():
     motor, pan, tilt = make_motor()
 
     motor._apply_axis_step("x", 1.0)
-    motor._apply_axis_step("y", -1.0)
+    motor._apply_axis_step("y", 1.0)
 
     assert motor.virtual_pan_angle == 1.0
-    assert motor.virtual_tilt_angle == -1.0
+    assert motor.virtual_tilt_angle == 1.0
     assert pan.targets[-1] == 1.0
-    assert tilt.targets[-1] == -1.0
+    assert tilt.targets[-1] == 1.0
 
 
-def test_pitch_range_runs_from_negative_five_to_positive_ninety():
+def test_tilt_range_runs_from_default_zero_to_positive_ninety():
     motor, _, tilt = make_motor()
 
     motor._apply_axis_step("y", 90.0)
@@ -81,13 +81,10 @@ def test_pitch_range_runs_from_negative_five_to_positive_ninety():
     assert tilt.targets[-1] == 90.0
 
     motor.virtual_tilt_angle = 0.0
-    motor._apply_axis_step("y", -5.0)
-    assert motor.virtual_tilt_angle == -5.0
-    assert tilt.targets[-1] == -5.0
-
+    targets_before_limit = list(tilt.targets)
     motor._apply_axis_step("y", -1.0)
-    assert motor.virtual_tilt_angle == -5.0
-    assert tilt.targets[-1] == -5.0
+    assert motor.virtual_tilt_angle == 0.0
+    assert tilt.targets == targets_before_limit
 
 
 def test_tracking_step_limiter_can_be_reset_for_new_target():
@@ -156,7 +153,7 @@ if __name__ == "__main__":
     test_set_angle_can_limit_single_servo_step()
     test_set_angle_can_limit_servo_acceleration_between_steps()
     test_shared_motor_boundary_preserves_both_servo_axis_directions()
-    test_pitch_range_runs_from_negative_five_to_positive_ninety()
+    test_tilt_range_runs_from_default_zero_to_positive_ninety()
     test_tracking_step_limiter_can_be_reset_for_new_target()
     test_manual_full_stick_uses_reduced_max_step()
     test_manual_precision_band_uses_reduced_max_step()
