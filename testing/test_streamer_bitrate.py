@@ -128,6 +128,12 @@ class PicameraStub:
 class ProcessStub:
     stdin = object()
 
+    def __init__(self, returncode=None):
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
+
 
 class LockStub:
     def __enter__(self):
@@ -151,6 +157,8 @@ def make_camera_streamer():
     camera.picam2 = PicameraStub()
     camera.ffmpeg_process = None
     camera.encoder = None
+    camera.mediamtx_process = ProcessStub()
+    camera._wait_for_mediamtx = lambda: None
     camera._start_ffmpeg = lambda: ProcessStub()
     return camera
 
@@ -241,6 +249,66 @@ def test_camera_streamer_starts_ffmpeg_with_live_timestamps_and_no_mux_delay(mon
         "rtsp://127.0.0.1:8554/live.stream",
     ]
     assert kwargs == {"stdin": streamer_module.subprocess.PIPE}
+
+
+def test_camera_streamer_waits_for_mediamtx_before_starting_ffmpeg():
+    camera = make_camera_streamer()
+    events = []
+    camera._wait_for_mediamtx = lambda: events.append("mediamtx-ready")
+    camera._start_ffmpeg = lambda: events.append("ffmpeg-started") or ProcessStub()
+
+    camera.start_stream()
+
+    assert events == ["mediamtx-ready", "ffmpeg-started"]
+
+
+def test_camera_streamer_retries_mediamtx_readiness(monkeypatch):
+    attempts = []
+
+    class ConnectionStub:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def create_connection_stub(address, timeout):
+        attempts.append((address, timeout))
+        if len(attempts) < 3:
+            raise ConnectionRefusedError("not ready")
+        return ConnectionStub()
+
+    monkeypatch.setattr(streamer_module.socket, "create_connection", create_connection_stub)
+    monkeypatch.setattr(streamer_module.time, "sleep", lambda _seconds: None)
+    camera = make_camera_streamer()
+
+    CameraStreamer._wait_for_mediamtx(camera, timeout_seconds=1.0)
+
+    assert len(attempts) == 3
+    assert attempts[-1][0] == (
+        streamer_module.MEDIAMTX_HOST,
+        streamer_module.MEDIAMTX_RTSP_PORT,
+    )
+
+
+def test_camera_streamer_restarts_dead_ffmpeg_publisher():
+    camera = make_camera_streamer()
+    camera.ffmpeg_process = ProcessStub(returncode=1)
+    restart_calls = []
+    camera._restart_stream_locked = lambda: restart_calls.append(True)
+
+    assert camera._recover_stream_if_needed() is True
+    assert restart_calls == [True]
+
+
+def test_camera_streamer_leaves_live_ffmpeg_publisher_running():
+    camera = make_camera_streamer()
+    camera.ffmpeg_process = ProcessStub(returncode=None)
+    restart_calls = []
+    camera._restart_stream_locked = lambda: restart_calls.append(True)
+
+    assert camera._recover_stream_if_needed() is False
+    assert restart_calls == []
 
 
 def test_camera_streamer_encodes_yuv_main_and_preserves_bgr_ml_stream():

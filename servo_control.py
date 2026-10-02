@@ -27,12 +27,8 @@ class MotorControl:
         self.limit_event_cooldown_s = 1.0
         self.X_MIN_ANGLE = -90
         self.X_MAX_ANGLE = 90
-        self.Y_MIN_ANGLE = -90
-        self.Y_MAX_ANGLE = 0
-        # Reverse both physical axes at the shared output boundary so this
-        # applies consistently to tracking and every manual-control source.
-        self.X_SERVO_DIRECTION = -1.0
-        self.Y_SERVO_DIRECTION = -1.0
+        self.Y_MIN_ANGLE = -5
+        self.Y_MAX_ANGLE = 90
 
         # Manual-control tuning with a dedicated precision band for small stick inputs.
         self.MANUAL_DEADZONE = 0.08
@@ -89,7 +85,6 @@ class MotorControl:
     def _apply_axis_step(self, axis, step):
         axis = axis.lower()
         if axis == "x":
-            step *= self.X_SERVO_DIRECTION
             current_angle = self.virtual_pan_angle
             requested_angle = current_angle + step
             if requested_angle < self.X_MIN_ANGLE or requested_angle > self.X_MAX_ANGLE:
@@ -101,7 +96,6 @@ class MotorControl:
             return
 
         if axis == "y":
-            step *= self.Y_SERVO_DIRECTION
             current_angle = self.virtual_tilt_angle
             requested_angle = current_angle + step
             if requested_angle < self.Y_MIN_ANGLE or requested_angle > self.Y_MAX_ANGLE:

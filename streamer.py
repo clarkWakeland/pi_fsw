@@ -11,6 +11,7 @@ import asyncio
 import json
 import subprocess
 import logging
+import socket
 import threading
 from fractions import Fraction
 from stream_settings import (
@@ -27,6 +28,11 @@ STREAM_FRAME_RATE_FFMPEG = "60000/1001"
 STREAM_GOP_FRAMES = 60
 SENSOR_OUTPUT_SIZE = (1536, 864)
 SENSOR_BIT_DEPTH = 10
+MEDIAMTX_HOST = "127.0.0.1"
+MEDIAMTX_RTSP_PORT = 8554
+MEDIAMTX_READY_TIMEOUT_SECONDS = 15.0
+MEDIAMTX_READY_RETRY_SECONDS = 0.1
+FFMPEG_WATCHDOG_INTERVAL_SECONDS = 1.0
 
 class Websocket_handler():
     def __init__(self, person_tracking_instance, camera_instance):
@@ -233,6 +239,7 @@ class CameraStreamer:
             self.picam2.configure(self._create_video_configuration(use_lores=False))
 
         self.start_stream()
+        threading.Thread(target=self._stream_watchdog_loop, daemon=True).start()
 
         # wait for camera
         time.sleep(2)
@@ -257,6 +264,38 @@ class CameraStreamer:
             'rtsp://127.0.0.1:8554/live.stream'  # Output to mediamtx server
         ], stdin=subprocess.PIPE)
 
+    def _wait_for_mediamtx(self, timeout_seconds=MEDIAMTX_READY_TIMEOUT_SECONDS):
+        deadline = time.monotonic() + timeout_seconds
+        last_error = None
+
+        while time.monotonic() < deadline:
+            if self.mediamtx_process.poll() is not None:
+                raise RuntimeError(
+                    f"MediaMTX exited with status {self.mediamtx_process.returncode} "
+                    "before its RTSP listener became ready"
+                )
+
+            try:
+                with socket.create_connection(
+                    (MEDIAMTX_HOST, MEDIAMTX_RTSP_PORT),
+                    timeout=MEDIAMTX_READY_RETRY_SECONDS,
+                ):
+                    logging.info(
+                        "MediaMTX RTSP listener is ready on %s:%s",
+                        MEDIAMTX_HOST,
+                        MEDIAMTX_RTSP_PORT,
+                    )
+                    return
+            except OSError as exc:
+                last_error = exc
+                time.sleep(MEDIAMTX_READY_RETRY_SECONDS)
+
+        raise TimeoutError(
+            f"MediaMTX RTSP listener did not become ready on "
+            f"{MEDIAMTX_HOST}:{MEDIAMTX_RTSP_PORT} within "
+            f"{timeout_seconds:.1f} seconds"
+        ) from last_error
+
     def _create_encoder(self):
         return LowLatencyH264Encoder(
             bitrate=self.bitrate_bps,
@@ -267,6 +306,7 @@ class CameraStreamer:
 
     def start_stream(self):
         with self.stream_lock:
+            self._wait_for_mediamtx()
             self.encoder = self._create_encoder()
             self.ffmpeg_process = self._start_ffmpeg()
             print(f"started ffmpeg process at bitrate {self.bitrate_bps} bps")
@@ -302,14 +342,43 @@ class CameraStreamer:
 
     def restart_stream(self):
         with self.stream_lock:
-            self.stop_stream()
-            self.encoder = self._create_encoder()
-            self.ffmpeg_process = self._start_ffmpeg()
-            print(f"restarted ffmpeg process at bitrate {self.bitrate_bps} bps")
-            self.picam2.start_recording(
+            self._restart_stream_locked()
+
+    def _restart_stream_locked(self):
+        self.stop_stream()
+        self._wait_for_mediamtx()
+        self.encoder = self._create_encoder()
+        self.ffmpeg_process = self._start_ffmpeg()
+        print(f"restarted ffmpeg process at bitrate {self.bitrate_bps} bps")
+        self.picam2.start_recording(
             self.encoder,
             FileOutput(self.ffmpeg_process.stdin)
-            )
+        )
+
+    def _recover_stream_if_needed(self):
+        with self.stream_lock:
+            process = self.ffmpeg_process
+            if process is not None and process.poll() is None:
+                return False
+
+            if process is None:
+                logging.error("ffmpeg publisher is missing; restarting RTSP publication")
+            else:
+                logging.error(
+                    "ffmpeg publisher exited with status %s; restarting RTSP publication",
+                    process.returncode,
+                )
+
+            self._restart_stream_locked()
+            return True
+
+    def _stream_watchdog_loop(self):
+        while True:
+            time.sleep(FFMPEG_WATCHDOG_INTERVAL_SECONDS)
+            try:
+                self._recover_stream_if_needed()
+            except Exception:
+                logging.exception("Failed to recover the ffmpeg RTSP publisher")
 
     def get_stream_settings(self):
         return bitrate_settings_payload(self.bitrate_bps)

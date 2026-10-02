@@ -38,8 +38,8 @@ def test_set_angle_can_limit_single_servo_step():
 
     motor.set_angle("x", 200.0, max_step=0.75)
 
-    assert motor.virtual_pan_angle == -0.75
-    assert stub.pan_values[-1] == -0.75
+    assert motor.virtual_pan_angle == 0.75
+    assert stub.pan_values[-1] == 0.75
 
 
 def test_set_angle_can_limit_servo_acceleration_between_steps():
@@ -48,32 +48,41 @@ def test_set_angle_can_limit_servo_acceleration_between_steps():
     motor.set_angle("x", 200.0, max_step=3.0, max_step_change=0.4)
     motor.set_angle("x", 200.0, max_step=3.0, max_step_change=0.4)
 
-    assert np.isclose(motor.virtual_pan_angle, -1.2)
-    np.testing.assert_allclose(stub.pan_values[-2:], [-0.4, -1.2], rtol=1e-5)
+    assert np.isclose(motor.virtual_pan_angle, 1.2)
+    np.testing.assert_allclose(stub.pan_values[-2:], [0.4, 1.2], rtol=1e-5)
 
 
-def test_shared_motor_boundary_reverses_both_servo_axes():
+def test_shared_motor_boundary_preserves_both_servo_axis_directions():
     motor = MotorControl()
 
     motor._apply_axis_step("x", 1.0)
-    motor._apply_axis_step("y", 1.0)
+    motor._apply_axis_step("y", -1.0)
 
-    assert motor.virtual_pan_angle == -1.0
+    assert motor.virtual_pan_angle == 1.0
     assert motor.virtual_tilt_angle == -1.0
-    assert stub.pan_values[-1] == -1.0
+    assert stub.pan_values[-1] == 1.0
     assert stub.tilt_values[-1] == -1.0
 
 
-def test_pitch_range_runs_from_zero_down_to_negative_ninety():
+def test_pitch_range_runs_from_negative_five_to_positive_ninety():
     motor = MotorControl()
 
     motor._apply_axis_step("y", 90.0)
-    assert motor.virtual_tilt_angle == -90.0
-    assert stub.tilt_values[-1] == -90.0
+    assert motor.virtual_tilt_angle == 90.0
+    assert stub.tilt_values[-1] == 90.0
 
     motor._apply_axis_step("y", 1.0)
-    assert motor.virtual_tilt_angle == -90.0
-    assert stub.tilt_values[-1] == -90.0
+    assert motor.virtual_tilt_angle == 90.0
+    assert stub.tilt_values[-1] == 90.0
+
+    motor.virtual_tilt_angle = 0.0
+    motor._apply_axis_step("y", -5.0)
+    assert motor.virtual_tilt_angle == -5.0
+    assert stub.tilt_values[-1] == -5.0
+
+    motor._apply_axis_step("y", -1.0)
+    assert motor.virtual_tilt_angle == -5.0
+    assert stub.tilt_values[-1] == -5.0
 
 
 def test_tracking_step_limiter_can_be_reset_for_new_target():
@@ -116,15 +125,15 @@ def test_manual_input_can_limit_acceleration_between_steps():
     motor.set_manual_input(1.0, 0.0, max_step_change=0.3)
     motor.set_manual_input(1.0, 0.0, max_step_change=0.3)
 
-    assert np.isclose(motor.virtual_pan_angle, 0.9)
-    np.testing.assert_allclose(stub.pan_values[-2:], [0.3, 0.9], rtol=1e-5)
+    assert np.isclose(motor.virtual_pan_angle, -0.9)
+    np.testing.assert_allclose(stub.pan_values[-2:], [-0.3, -0.9], rtol=1e-5)
 
 
 if __name__ == "__main__":
     test_set_angle_can_limit_single_servo_step()
     test_set_angle_can_limit_servo_acceleration_between_steps()
-    test_shared_motor_boundary_reverses_both_servo_axes()
-    test_pitch_range_runs_from_zero_down_to_negative_ninety()
+    test_shared_motor_boundary_preserves_both_servo_axis_directions()
+    test_pitch_range_runs_from_negative_five_to_positive_ninety()
     test_tracking_step_limiter_can_be_reset_for_new_target()
     test_manual_full_stick_uses_reduced_max_step()
     test_manual_precision_band_uses_reduced_max_step()
