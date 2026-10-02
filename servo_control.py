@@ -1,14 +1,18 @@
+import logging
+import os
+import threading
 import time
-import pantilthat
 import numpy as np
+from gimbal_serial import DEFAULT_PAN_PORT, DEFAULT_TILT_PORT, GimbalAxis
 from runtime_utils import limit_step_acceleration
+
+
+logger = logging.getLogger(__name__)
 
 
 class MotorControl:
    
-    def __init__(self, ws_callback=None):
-        self.X_SERVO_PIN = 0
-        self.Y_SERVO_PIN = 1
+    def __init__(self, ws_callback=None, axis_controllers=None):
         self.PROPORTIONAL_GAIN = 0.0115  # Reduced tracking response to limit overshoot.
         self.DERIVATIVE_GAIN = 0.0005   # Experimental constants, deviation from these can result in oscillation
                                         # or sluggish movement, but can probably be tuned more
@@ -29,26 +33,68 @@ class MotorControl:
         self.X_MAX_ANGLE = 90
         self.Y_MIN_ANGLE = -5
         self.Y_MAX_ANGLE = 90
+        self.angle_lock = threading.Lock()
+        self.angle_initialized = {"x": False, "y": False}
 
-        # Manual-control tuning with a dedicated precision band for small stick inputs.
+        # Manual target-angle tuning. The ESP32 performs the physical velocity and
+        # acceleration limiting, so these steps only advance its absolute target.
         self.MANUAL_DEADZONE = 0.08
-        # The PanTilt HAT uses integer-microsecond pulse widths. With its
-        # default 575-2325 us range, 0.31 degrees advances by about three
-        # microseconds per nonzero manual-control update.
-        self.MANUAL_MIN_STEP = 0.31
+        self.MANUAL_MIN_STEP = 0.02
         self.MANUAL_PRECISION_BAND_MAX = 0.5
-        # Keep low-band outputs above common stiction while preserving fine response.
-        self.MANUAL_LOW_BAND_MAX_STEP = 0.55
+        self.MANUAL_LOW_BAND_MAX_STEP = 0.08
         self.MANUAL_LOW_BAND_EXPO = 1.4
         self.MANUAL_HIGH_BAND_EXPO = 1.25
-        self.MANUAL_MAX_STEP = 1.6
+        self.MANUAL_MAX_STEP = 0.28
 
-        # init angles
-        pantilthat.pan(0)
-        pantilthat.tilt(0)
         self.virtual_pan_angle = 0.0
         self.virtual_tilt_angle = 0.0
-        print('servo initialized')
+
+        if axis_controllers is None:
+            axis_controllers = {
+                "x": GimbalAxis(
+                    "PAN",
+                    os.environ.get("QCAM_PAN_SERIAL_PORT", DEFAULT_PAN_PORT),
+                    state_callback=self._handle_axis_state,
+                ),
+                "y": GimbalAxis(
+                    "TILT",
+                    os.environ.get("QCAM_TILT_SERIAL_PORT", DEFAULT_TILT_PORT),
+                    state_callback=self._handle_axis_state,
+                ),
+            }
+        self.axis_controllers = axis_controllers
+        logger.info("ESP32 gimbal motor control initialized")
+
+    def _handle_axis_state(self, axis_name, state):
+        axis = "x" if axis_name.upper() == "PAN" else "y"
+        with self.angle_lock:
+            if not state.connected:
+                self.angle_initialized[axis] = False
+                return
+            if state.angle_degrees is None:
+                return
+            if not self.angle_initialized[axis] or state.controller_state == "DISABLED":
+                if axis == "x":
+                    self.virtual_pan_angle = float(state.angle_degrees)
+                else:
+                    self.virtual_tilt_angle = float(state.angle_degrees)
+                self.angle_initialized[axis] = True
+
+    def _initialize_axis_angle(self, axis):
+        if self.angle_initialized[axis]:
+            return True
+        controller = self.axis_controllers.get(axis)
+        if controller is None:
+            return False
+        state = controller.state
+        if not state.connected or state.angle_degrees is None:
+            return False
+        if axis == "x":
+            self.virtual_pan_angle = float(state.angle_degrees)
+        else:
+            self.virtual_tilt_angle = float(state.angle_degrees)
+        self.angle_initialized[axis] = True
+        return True
 
     def reset_tracking_steps(self):
         self.last_x_step = 0.0
@@ -84,27 +130,36 @@ class MotorControl:
 
     def _apply_axis_step(self, axis, step):
         axis = axis.lower()
-        if axis == "x":
-            current_angle = self.virtual_pan_angle
-            requested_angle = current_angle + step
-            if requested_angle < self.X_MIN_ANGLE or requested_angle > self.X_MAX_ANGLE:
-                print('servo at max angle')
-                self.emit_servo_limit("x", requested_angle, self.X_MIN_ANGLE, self.X_MAX_ANGLE)
-                return
-            self.virtual_pan_angle = float(requested_angle)
-            pantilthat.pan(requested_angle)
+        if axis not in self.axis_controllers:
+            logger.warning("Ignoring command for unavailable gimbal axis %s", axis)
             return
 
-        if axis == "y":
-            current_angle = self.virtual_tilt_angle
-            requested_angle = current_angle + step
-            if requested_angle < self.Y_MIN_ANGLE or requested_angle > self.Y_MAX_ANGLE:
-                print('servo at max angle')
-                self.emit_servo_limit("y", requested_angle, self.Y_MIN_ANGLE, self.Y_MAX_ANGLE)
+        with self.angle_lock:
+            if not self._initialize_axis_angle(axis):
+                logger.debug("Waiting for initial %s gimbal angle", axis)
                 return
-            self.virtual_tilt_angle = float(requested_angle)
-            pantilthat.tilt(requested_angle)
-            return
+
+            if axis == "x":
+                current_angle = self.virtual_pan_angle
+                min_angle = self.X_MIN_ANGLE
+                max_angle = self.X_MAX_ANGLE
+            else:
+                current_angle = self.virtual_tilt_angle
+                min_angle = self.Y_MIN_ANGLE
+                max_angle = self.Y_MAX_ANGLE
+
+            requested_angle = current_angle + step
+            if requested_angle < min_angle or requested_angle > max_angle:
+                logger.info("Gimbal axis %s is at its configured angle limit", axis)
+                self.emit_servo_limit(axis, requested_angle, min_angle, max_angle)
+                return
+
+            if axis == "x":
+                self.virtual_pan_angle = float(requested_angle)
+            else:
+                self.virtual_tilt_angle = float(requested_angle)
+
+        self.axis_controllers[axis].set_target(requested_angle)
         
     def set_angle(self, axis, delta, max_step=None, max_step_change=None):
         axis = axis.lower()
@@ -182,3 +237,7 @@ class MotorControl:
             low = max(low, -max_step)
             high = min(high, max_step)
         return max(low, min(high, angle))
+
+    def close(self):
+        for controller in self.axis_controllers.values():
+            controller.close()
