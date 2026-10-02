@@ -43,8 +43,8 @@ def test_set_angle_can_limit_single_servo_step():
 
     motor.set_angle("x", 200.0, max_step=0.75)
 
-    assert motor.virtual_pan_angle == 0.75
-    assert pan.targets[-1] == 0.75
+    assert motor.virtual_pan_angle == -0.75
+    assert pan.targets[-1] == -0.75
 
 
 def test_set_angle_can_limit_servo_acceleration_between_steps():
@@ -53,8 +53,8 @@ def test_set_angle_can_limit_servo_acceleration_between_steps():
     motor.set_angle("x", 200.0, max_step=3.0, max_step_change=0.4)
     motor.set_angle("x", 200.0, max_step=3.0, max_step_change=0.4)
 
-    assert np.isclose(motor.virtual_pan_angle, 1.2)
-    np.testing.assert_allclose(pan.targets[-2:], [0.4, 1.2], rtol=1e-5)
+    assert np.isclose(motor.virtual_pan_angle, -1.2)
+    np.testing.assert_allclose(pan.targets[-2:], [-0.4, -1.2], rtol=1e-5)
 
 
 def test_shared_motor_boundary_preserves_both_servo_axis_directions():

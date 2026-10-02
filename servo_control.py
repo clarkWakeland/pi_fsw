@@ -169,7 +169,9 @@ class MotorControl:
             time_diff = now - self.last_x_time
             p = delta * self.PROPORTIONAL_GAIN
             d = self.calc_derivative(delta, self.last_x_delta, time_diff)
-            control_output = self.clamp_control(p + d, max_step=max_step)
+            # The brushless pan motor's tracking direction is opposite to the
+            # legacy servo convention used by the image-error controller.
+            control_output = self.clamp_control(-(p + d), max_step=max_step)
             if max_step_change is not None:
                 control_output = limit_step_acceleration(control_output, self.last_x_step, max_step_change)
             self._apply_axis_step("x", control_output)
