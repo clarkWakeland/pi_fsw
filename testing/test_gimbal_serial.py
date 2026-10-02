@@ -6,7 +6,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from gimbal_serial import GimbalAxis
+from gimbal_serial import DEFAULT_PAN_PORT, DEFAULT_TILT_PORT, GimbalAxis
+
+
+def test_default_usb_paths_match_physical_motor_wiring():
+    assert "xhci-hcd.0" in DEFAULT_TILT_PORT
+    assert "xhci-hcd.1" in DEFAULT_PAN_PORT
 
 
 def test_state_line_is_parsed_and_emitted():

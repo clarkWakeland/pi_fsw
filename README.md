@@ -31,8 +31,8 @@ The pan and tilt motors use persistent USB serial connections to their ESP32
 controllers. Defaults can be overridden for development:
 
 ```sh
-export QCAM_PAN_SERIAL_PORT=/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0
-export QCAM_TILT_SERIAL_PORT=/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0
+export QCAM_TILT_SERIAL_PORT=/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0
+export QCAM_PAN_SERIAL_PORT=/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0
 ```
 
 `servo_control.MotorControl` preserves the existing tracking and manual-control

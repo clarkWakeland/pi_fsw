@@ -10,8 +10,11 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PAN_PORT = "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0"
-DEFAULT_TILT_PORT = "/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0"
+# The v1 controller currently connected through the first xHCI path drives the
+# physical tilt motor. Keep these mappings tied to the wiring, rather than the
+# ESP32's generic AXIS1 identifier.
+DEFAULT_TILT_PORT = "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0"
+DEFAULT_PAN_PORT = "/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0"
 SERIAL_BAUD = 115200
 RECONNECT_INTERVAL_SECONDS = 1.0
 PROTOCOL_RETRY_INTERVAL_SECONDS = 30.0
