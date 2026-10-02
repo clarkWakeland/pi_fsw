@@ -323,6 +323,7 @@ def test_camera_streamer_encodes_yuv_main_and_preserves_bgr_ml_stream():
         "bit_depth": SENSOR_BIT_DEPTH,
     }
     assert configuration["controls"]["FrameRate"] == float(Fraction(60000, 1001))
+    assert configuration["transform"] == {}
 
 
 def test_camera_streamer_main_only_fallback_remains_yuv():
@@ -336,6 +337,7 @@ def test_camera_streamer_main_only_fallback_remains_yuv():
         "bit_depth": SENSOR_BIT_DEPTH,
     }
     assert configuration["controls"]["FrameRate"] == float(Fraction(60000, 1001))
+    assert configuration["transform"] == {}
     assert "lores" not in configuration
 
 

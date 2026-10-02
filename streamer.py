@@ -413,7 +413,11 @@ class CameraStreamer:
                 "bit_depth": SENSOR_BIT_DEPTH,
             },
             "controls": {"FrameRate": float(STREAM_FRAME_RATE)},
-            "transform": Transform(hflip=1, vflip=1),
+            # This camera is mounted opposite to the original hardware. The
+            # previous hflip + vflip rotated both streams 180 degrees and made
+            # this unit's output upside down, so use the sensor's native
+            # orientation for both the RTSP and ML streams.
+            "transform": Transform(),
         }
 
         if not use_lores:
