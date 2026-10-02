@@ -16,6 +16,11 @@ class MotorControl:
         self.PROPORTIONAL_GAIN = 0.0115  # Reduced tracking response to limit overshoot.
         self.DERIVATIVE_GAIN = 0.0005   # Experimental constants, deviation from these can result in oscillation
                                         # or sluggish movement, but can probably be tuned more
+        # Tilt has more visible image motion per degree and was oscillating
+        # around the target with the shared pan gains. Keep it independently
+        # tunable and start with approximately half the prior response.
+        self.TILT_PROPORTIONAL_GAIN = 0.006
+        self.TILT_DERIVATIVE_GAIN = 0.00025
         self.last_x_delta = 0
         self.last_y_delta = 0
         self.last_x_time = time.time()
@@ -122,11 +127,13 @@ class MotorControl:
             }
         })
 
-    def calc_derivative(self, delta, last_delta, time_diff):
+    def calc_derivative(self, delta, last_delta, time_diff, gain=None):
         if time_diff <= 0:
             return 0
         d = (delta - last_delta) / time_diff
-        return d * self.DERIVATIVE_GAIN
+        if gain is None:
+            gain = self.DERIVATIVE_GAIN
+        return d * gain
 
     def _apply_axis_step(self, axis, step):
         axis = axis.lower()
@@ -182,8 +189,13 @@ class MotorControl:
 
         if axis == "y":
             time_diff = now - self.last_y_time
-            p = delta * self.PROPORTIONAL_GAIN
-            d = self.calc_derivative(delta, self.last_y_delta, time_diff)
+            p = delta * self.TILT_PROPORTIONAL_GAIN
+            d = self.calc_derivative(
+                delta,
+                self.last_y_delta,
+                time_diff,
+                gain=self.TILT_DERIVATIVE_GAIN,
+            )
             control_output = self.clamp_control(p + d, max_step=max_step)
             if max_step_change is not None:
                 control_output = limit_step_acceleration(control_output, self.last_y_step, max_step_change)

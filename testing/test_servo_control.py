@@ -36,6 +36,18 @@ def test_tracking_proportional_gain_is_reduced_to_limit_overshoot():
 
     assert motor.PROPORTIONAL_GAIN == 0.0115
     assert motor.DERIVATIVE_GAIN == 0.0005
+    assert motor.TILT_PROPORTIONAL_GAIN == 0.006
+    assert motor.TILT_DERIVATIVE_GAIN == 0.00025
+
+
+def test_tilt_tracking_uses_reduced_axis_specific_gain():
+    motor, _, tilt = make_motor()
+    motor.last_y_delta = 100.0
+
+    motor.set_angle("y", 100.0, max_step=3.0)
+
+    assert np.isclose(motor.virtual_tilt_angle, 0.6)
+    np.testing.assert_allclose(tilt.targets, [0.6], rtol=1e-5)
 
 
 def test_set_angle_can_limit_single_servo_step():
